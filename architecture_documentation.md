@@ -54,31 +54,25 @@ The OpenClaw runtime manages several modular components to ensure seamless multi
 
 ---
 
-## 3. Specialized Agent Registry
+## 3. Specialized Skill Directory
 
-The orchestrator distributes tasks across five primary agents to handle diverse user intents:
+The Orchestrator dynamically equips the core cognitive engine with modular skills to handle diverse user intents. By hot-swapping these capability packages, the system can execute the following specialized workflows:
 
-* **Property Search Agent:** Parses free-text queries into structured filters (e.g., city, price, beds) and executes them against the active listings table.
-* **Market Stats Agent:** Aggregates historical transaction data to provide trends, average days on market, and list-to-close ratios.
-* **Recommendation Agent:** Generates hybrid similarity scores (combining structured SQL filters and vector embeddings) to surface similar properties, validating list prices against recent comps.
-* **RAG Agent:** Answers conceptual questions regarding real estate terminology and MLS field definitions using indexed source documents.
-* **Email Draft Agent:** Composes formatted property or market summaries for email delivery.
+- **Property Search Skill:** Parses free-text queries into structured filters (e.g., city, price, beds) and executes them against the active listings table.
+- **Market Stats Skill:** Aggregates historical transaction data to provide trends, average days on market, and list-to-close ratios.
+- **Recommendation Skill:** Generates hybrid similarity scores (combining structured SQL filters and vector embeddings) to surface similar properties, validating list prices against recent comps.
+- **RAG Skill:** Answers conceptual questions regarding real estate terminology and MLS field definitions using indexed source documents.
+- **Email Draft Skill:** Composes formatted property or market summaries for email delivery.
 
 ---
 
 ## 4. Data Layer
 
-The system connects to a local MySQL schema (`boxgra5_cali`) containing over 667,000 real estate records. 
+The system connects to a local MySQL schema.
 
 * **`rets_property`:** The active listing database containing 130+ fields, used for live search and discovery. It features a `FULLTEXT` index on listing remarks to support semantic vector search.
 * **`california_sold`:** The historical comps table containing 46 fields, utilized for market analytics, trend validation, and price modeling.
 
 ---
 
-## 5. Safety Guardrails
-
-To ensure production readiness, the architecture implements strict human-in-the-loop safety measures:
-
-* **Approval Gates:** The Email Draft Agent is structurally prevented from sending communications autonomously. It must queue drafts, expose previews, and require explicit human confirmation before dispatching via SMTP.
-* **Query Constraints:** Direct database interactions enforce pagination limits (e.g., maximum 50 rows per query) to prevent bulk dataset extraction.
-* **Credential Security:** All API keys and database credentials are fully decoupled from the application logic and injected strictly via environment variables.
+At a high level, the openclaw schema will take the user request from a channel of conversation that holds the session, e.g. WhatsApp, give it to the Orchestrator who will activate the appropriate skill to provide the proper context and tools in order to properly query the database and recieve the relevant information, which will be saved in session memory, to answer the query. When the proper answer is made, it will be sent through the channel to the user, in our case whatsapp. 
