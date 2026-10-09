@@ -1,5 +1,10 @@
 import { propertySearch, PropertyFilters } from "../skills/propertySearch.ts";
-import assert from "assert";
+
+function assertDeepStrictEqual(actual: unknown, expected: unknown): void {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error("Values are not deeply equal");
+  }
+}
 
 interface TestCase {
   query: string;
@@ -149,7 +154,7 @@ async function runTests() {
 
     try {
       // assert.deepStrictEqual checks that all keys and values match exactly
-      assert.deepStrictEqual(actual, expected);
+      assertDeepStrictEqual(actual, expected);
       console.log(`Test ${i + 1} Passed: "${query}"`);
       passedCount++;
     } catch (error) {
