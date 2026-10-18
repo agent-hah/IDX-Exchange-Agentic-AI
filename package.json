@@ -3,5 +3,8 @@
     "@types/node": "^26.6.5",
     "ts-node": "^10.9.2",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "mysql2": "^3.24.6"
   }
 }

@@ -1,4 +1,7 @@
-import { propertySearch, PropertyFilters } from "../skills/propertySearch.ts";
+import {
+  parsePropertyQuery,
+  PropertyFilters,
+} from "../skills/propertySearch.ts";
 
 function assertDeepStrictEqual(actual: unknown, expected: unknown): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -150,7 +153,7 @@ async function runTests() {
 
   for (let i = 0; i < tests.length; i++) {
     const { query, expected } = tests[i];
-    const actual = await propertySearch(query);
+    const actual = await parsePropertyQuery(query);
 
     try {
       // assert.deepStrictEqual checks that all keys and values match exactly

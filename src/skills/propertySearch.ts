@@ -9,7 +9,9 @@ export interface PropertyFilters {
   hasView: string | null;
 }
 
-export async function propertySearch(query: string): Promise<PropertyFilters> {
+export async function parsePropertyQuery(
+  query: string,
+): Promise<PropertyFilters> {
   const cityMatch = query.match(
     /in ([A-Za-z\s]+?)(?:\s+under|\s+with|\s+at|$)/,
   );
@@ -52,18 +54,4 @@ export async function propertySearch(query: string): Promise<PropertyFilters> {
     pool: poolMatch ? "True" : null,
     hasView: viewMatch ? "True" : null,
   };
-}
-
-export async function handleMessage(message: string) {
-  try {
-    const filters = await propertySearch(message);
-
-    return {
-      status: "success",
-      intent: "property_search",
-      filters: filters,
-    };
-  } catch (error) {
-    return { response: "I could not understand the search request." };
-  }
 }
