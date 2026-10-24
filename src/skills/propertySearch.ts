@@ -15,8 +15,7 @@ export async function parsePropertyQuery(
   const cityMatch = query.match(
     /in ([A-Za-z\s]+?)(?:\s+under|\s+with|\s+at|$)/,
   );
-  const priceMatch = query.match(/under \$?([\d,.]+)(k|m)?/i);
-  const bedsMatch = query.match(/(\d+)[\s-]*(bed|beds|bedroom|bedrooms)/i);
+  const priceMatch = query.match(/(?:under|budget|max).*?\$?([\d,.]+)[\s]*(k|m)?/i);  const bedsMatch = query.match(/(\d+)[\s-]*(bed|beds|bedroom|bedrooms)/i);
   const bathsMatch = query.match(
     /(\d+(?:\.5)?)[\s-]*(bath|baths|bathroom|bathrooms)/i,
   );
