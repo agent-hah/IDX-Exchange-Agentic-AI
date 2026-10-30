@@ -38,7 +38,7 @@ export async function parsePropertyQuery(
 
   let maxPrice = null;
   if (priceMatch) {
-    maxPrice = Number(priceMatch[1].replace(/,/g, ""));
+    maxPrice = Number((priceMatch[1] ?? "").replace(/,/g, ""));
     if (priceMatch[2]?.toLowerCase() === "k") maxPrice *= 1000;
     if (priceMatch[2]?.toLowerCase() === "m") maxPrice *= 1000000;
   }
@@ -49,7 +49,7 @@ export async function parsePropertyQuery(
     beds: bedsMatch ? Number(bedsMatch[1]) : null,
     baths: bathsMatch ? Number(bathsMatch[1]) : null,
     sqft: sqftMatch ? Number(sqftMatch[1]) : null,
-    type: typeKey ? typeMap[typeKey] : null,
+    type: typeKey ? (typeMap[typeKey] ?? null) : null,
     pool: poolMatch ? "True" : null,
     hasView: viewMatch ? "True" : null,
   };

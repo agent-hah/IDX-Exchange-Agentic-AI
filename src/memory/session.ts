@@ -1,4 +1,4 @@
-import { PropertyFilters } from "../skills/propertySearch";
+import type { PropertyFilters } from "../skills/propertySearch.ts";
 
 export interface UserSession extends Partial<PropertyFilters> {
   lastResults?: any[]; 

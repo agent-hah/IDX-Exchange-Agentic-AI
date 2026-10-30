@@ -1,5 +1,5 @@
-import { query } from "../db/connection";
-import { PropertyFilters } from "./propertySearch";
+import { query } from "../db/connection.ts";
+import type { PropertyFilters } from "./propertySearch.ts";
 
 // Define the row structure we expect back from the database
 export interface ListingRow {

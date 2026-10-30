@@ -1,6 +1,6 @@
 import {
   parsePropertyQuery,
-  PropertyFilters,
+  type PropertyFilters,
 } from "../skills/propertySearch.ts";
 
 function assertDeepStrictEqual(actual: unknown, expected: unknown): void {
@@ -152,7 +152,7 @@ async function runTests() {
   let passedCount = 0;
 
   for (let i = 0; i < tests.length; i++) {
-    const { query, expected } = tests[i];
+    const { query, expected } = tests[i]!;
     const actual = await parsePropertyQuery(query);
 
     try {

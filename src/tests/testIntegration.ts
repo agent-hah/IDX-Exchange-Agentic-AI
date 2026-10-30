@@ -1,5 +1,5 @@
-import { closeConnection } from "../db/connection";
-import { handleMessage } from "../skills/searchSkill";
+import { closeConnection } from "../db/connection.ts";
+import { handleMessage } from "../skills/searchSkill.ts";
 
 async function run() {
   const query = "Show me 3-bedroom condos in Irvine";

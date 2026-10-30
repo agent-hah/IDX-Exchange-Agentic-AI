@@ -1,6 +1,6 @@
-import { parsePropertyQuery, PropertyFilters } from "./propertySearch";
-import { searchActiveListings, ListingRow } from "./propertyQueries";
-import { getSession, updateSession, clearSession } from "../memory/session";
+import { parsePropertyQuery, type PropertyFilters } from "./propertySearch.ts";
+import { searchActiveListings, type ListingRow } from "./propertyQueries.ts";
+import { getSession, updateSession, clearSession } from "../memory/session.ts";
 
 export async function handleMessage(message: string, userId: string) {
   try {

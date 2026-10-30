@@ -1,4 +1,15 @@
 {
+  "name": "idx-exchange-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:parser": "node src/tests/testSearch.ts",
+    "test:search": "node src/tests/testIntegration.ts",
+    "test:market-parser": "node src/tests/testMarketParser.ts",
+    "test:market": "node src/tests/testMarketStats.ts",
+    "export:market": "node src/scripts/exportMarketReports.ts"
+  },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "ts-node": "^10.9.2",
