@@ -1,6 +1,6 @@
 import { getSession, updateSession } from "../../memory/session.ts";
 import type { AgentResult } from "../../types.ts";
-import { fmtInt, fmtPrice } from "../../utils/format.ts";
+import { fmtInt, fmtPrice, typeLabel } from "../../utils/format.ts";
 import { semanticSearch, type HardFilters, type SemanticSearchResult } from "./search.ts";
 
 /**
@@ -17,7 +17,7 @@ function snippet(remarks: string | null, max = 160): string {
 function describeFilters(f: HardFilters): string {
   const parts = [
     f.city,
-    f.type,
+    f.types && f.types.length > 1 ? f.types.map(typeLabel).join(" or ") : f.type ? typeLabel(f.type) : null,
     f.maxPrice ? `≤ ${fmtPrice(f.maxPrice)}` : null,
     f.beds ? `${f.beds}+ beds` : null,
     f.baths ? `${f.baths}+ baths` : null,
@@ -36,6 +36,7 @@ export function formatSemanticResults(r: SemanticSearchResult): string {
       fmtPrice(h.price),
       `${h.beds ?? "?"}bd/${h.baths !== null ? Number(h.baths) : "?"}ba`,
       h.sqft ? `${fmtInt(h.sqft)} sqft` : null,
+      h.type ? typeLabel(h.type) : null,
       h.PhotoCount ? `📸 ${h.PhotoCount}` : null,
     ].filter(Boolean);
     lines.push(`${i + 1}. *${h.L_Address}, ${h.L_City}* · similarity ${h.score.toFixed(2)}`);

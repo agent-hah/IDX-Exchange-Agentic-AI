@@ -122,7 +122,16 @@ openclaw plugins inspect idx-exchange --runtime     # should list idx_property_s
 openclaw skills list | grep idx-real-estate          # the bundled skill that tells the agent to use these tools
 ```
 
-OpenClaw asks you to approve the plugin's capabilities on install. Then start a fresh conversation (send `/new` in WhatsApp) so the agent picks up the new tools.
+OpenClaw asks you to approve the plugin's capabilities on install.
+
+Give each WhatsApp chat its own session (recommended):
+
+```bash
+openclaw config set session.dmScope per-channel-peer
+openclaw gateway restart
+```
+
+With the default (`main`), every DM shares the agent's single main session, along with CLI runs that don't pass `--session-key`. That session can't be archived, and a long history in it leaks old criteria into new questions. `per-channel-peer` keeps WhatsApp separate; undo it with `openclaw config set session.dmScope main`.
 
 Check it end to end:
 
@@ -176,7 +185,7 @@ Tests use Node's built-in runner (`node:test`); run one file with `node --test t
 
 ## What each week added
 
-**Week 2: Natural-language property search.** `src/agents/propertySearch/parser.ts` parses free text like *"3-bedroom condos in Irvine under $1.5M with a pool"* into structured filters (city, max price, beds, baths, sqft, type, pool, view).
+**Week 2: Natural-language property search.** `src/agents/propertySearch/parser.ts` parses free text like *"3-bedroom condos in Irvine under $1.5M with a pool"* into structured filters (city, max price, beds, baths, sqft, type or several types, pool, view). Type words match whole words only, so "Oakland" isn't read as land.
 
 **Week 3: MLS database integration.** `src/db/connection.ts` (mysql2 connection pool) and `src/agents/propertySearch/queries.ts` turn those filters into parameterized SQL over `rets_property`, with pagination, plus a sold-comps query over `california_sold`.
 
@@ -269,6 +278,7 @@ The handbook describes `california_sold` as covering 2021–2025. The copy used 
 - **`npx ts-node` crashes with `Cannot read properties of undefined (reading 'fileExists')`**: ts-node does not support TypeScript 7. Run files with `node` instead (see Commands).
 - **WhatsApp answers sound generic and don't match your data**: OpenClaw isn't calling the tools. Check `openclaw plugins inspect idx-exchange --runtime`, reload with `openclaw plugins reload idx-exchange`, then send `/new` to start a fresh session. To see which tools a run used: `openclaw agent --agent coordinator --json --message "…"` and look at `successfulToolNames`.
 - **`openclaw: command not found`**: if you run OpenClaw from the submodule, use `pnpm openclaw …` inside `openclaw/`, or add `alias openclaw="pnpm --silent --dir <repo>/openclaw openclaw"` to your shell config. Commands that take an agent need `--agent coordinator` when several agents are configured.
+- **WhatsApp keeps reusing an old budget or old results, even after `/new`**: the chat is in the agent's shared main session, which still holds the earlier conversation. Set `session.dmScope` to `per-channel-peer` (see setup step 6) and restart the gateway. To confirm, check that WhatsApp's `idx_*` calls run under a new session id, not `agent:<agent>:main`.
 - **The agent says the MLS data is unavailable**: the plugin couldn't query MySQL. Find the reason with `openclaw logs --limit 3000 --plain | grep -A2 -E "Skill Error|\[idx-exchange\]"`:
   - `ECONNREFUSED`: MySQL isn't running (external drive unplugged, or the MySQL container stopped).
   - `Access denied`: wrong credentials. Check the `[idx-exchange] settings from …` line in the logs to see which `.env` the plugin loaded. To point it at a different file: `openclaw config set plugins.entries.idx-exchange.config.envFile /path/to/IDX-Exchange/.env`, then `openclaw plugins reload idx-exchange`.

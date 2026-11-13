@@ -73,12 +73,26 @@ const int = (description: string, minimum = 0): JsonSchema => ({ type: "integer"
 const propertyType: JsonSchema = {
   type: "string",
   enum: [...PROPERTY_TYPES],
-  description: "Property type: SingleFamilyResidence (houses), Condominium (condos) or Townhouse (townhomes).",
+  description: "Property type, only if the user named one: SingleFamilyResidence (houses), Condominium (condos) or Townhouse (townhomes).",
 };
+const propertyTypes: JsonSchema = {
+  type: "array",
+  items: { type: "string", enum: [...PROPERTY_TYPES] },
+  minItems: 1,
+  uniqueItems: true,
+  description:
+    "Property types the user asked for; include every one they named (e.g. condos AND townhomes → [\"Condominium\", \"Townhouse\"]). " +
+    "SingleFamilyResidence = houses. Omit if the user didn't specify a type.",
+};
+const ONLY_IF_STATED = " Only set this if the user stated it; never guess or fill in a default.";
 
-/** One isolated session per OpenClaw conversation. */
+/**
+ * One isolated search session per OpenClaw conversation. OpenClaw's sessionId
+ * is regenerated on /new and /reset, so a fresh chat starts with no remembered
+ * budget or filters; sessionKey stays the same for a WhatsApp chat across /new.
+ */
 export function sessionIdFor(ctx: ToolContext): string {
-  return `openclaw:${ctx.sessionKey ?? ctx.sessionId ?? ctx.requesterSenderId ?? ctx.nativeChannelId ?? "default"}`;
+  return `openclaw:${ctx.sessionId ?? ctx.sessionKey ?? ctx.requesterSenderId ?? ctx.nativeChannelId ?? "default"}`;
 }
 
 const GUIDANCE: Record<AgentResult["status"], string> = {
@@ -122,21 +136,21 @@ function propertySearchTool(ctx: ToolContext): AgentTool {
     catalogMode: "direct-only",
     description:
       "Search ACTIVE California MLS listings (rets_property) by concrete criteria: city, max price, bedrooms, bathrooms, square feet, property type, pool, view. " +
-      "Use for requests like 'find 3-bed condos in Irvine under $1.2M'. Multi-turn: if the result asks a follow-up (budget, bedrooms), relay it and call again with the answer. " +
+      "Use for requests like 'find 3-bed condos in Irvine'. Multi-turn: if the result asks a follow-up (budget, bedrooms), ask the user and call again with THEIR answer; never invent a budget or bedroom count to skip the question. " +
       "Set newSearch=true when the user starts a different search. Always use this instead of general knowledge for current listings.",
     parameters: {
       type: "object",
       additionalProperties: false,
       required: ["query"],
       properties: {
-        query: str("The user's request in their own words, e.g. '3 bedroom condos in Irvine under $1.5M with a pool'."),
+        query: str("The user's request, copied in their own words."),
         newSearch: { type: "boolean", description: "True to forget earlier search criteria in this conversation and start over." },
         city: str("California city, e.g. 'Irvine'."),
-        maxPrice: int("Maximum list price in dollars, e.g. 1500000."),
-        minBeds: int("Minimum bedrooms."),
-        minBaths: { type: "number", minimum: 0, description: "Minimum bathrooms (half baths allowed, e.g. 2.5)." },
-        minSqft: int("Minimum living area in square feet."),
-        propertyType,
+        maxPrice: int("The user's maximum price, converted to whole dollars (they say '$850K' → 850000)." + ONLY_IF_STATED),
+        minBeds: int("Minimum bedrooms." + ONLY_IF_STATED),
+        minBaths: { type: "number", minimum: 0, description: "Minimum bathrooms (half baths allowed, e.g. 2.5)." + ONLY_IF_STATED },
+        minSqft: int("Minimum living area in square feet." + ONLY_IF_STATED),
+        propertyTypes,
         pool: { type: "boolean", description: "True if a private pool is required." },
         view: { type: "boolean", description: "True if a view is required." },
       },
@@ -151,7 +165,7 @@ function propertySearchTool(ctx: ToolContext): AgentTool {
           beds: p.minBeds,
           baths: p.minBaths,
           sqft: p.minSqft,
-          type: p.propertyType,
+          types: Array.isArray(p.propertyTypes) && p.propertyTypes.length ? p.propertyTypes : undefined,
           pool: p.pool ? "True" : undefined,
           hasView: p.view ? "True" : undefined,
         }) as Partial<PropertyFilters>;
@@ -214,11 +228,11 @@ function semanticSearchTool(ctx: ToolContext): AgentTool {
       properties: {
         description: str("What the user is looking for, in their words."),
         city: str("California city to restrict to."),
-        maxPrice: int("Maximum list price in dollars."),
-        minBeds: int("Minimum bedrooms."),
-        minBaths: { type: "number", minimum: 0, description: "Minimum bathrooms." },
-        minSqft: int("Minimum living area in square feet."),
-        propertyType,
+        maxPrice: int("The user's maximum price, converted to whole dollars." + ONLY_IF_STATED),
+        minBeds: int("Minimum bedrooms." + ONLY_IF_STATED),
+        minBaths: { type: "number", minimum: 0, description: "Minimum bathrooms." + ONLY_IF_STATED },
+        minSqft: int("Minimum living area in square feet." + ONLY_IF_STATED),
+        propertyTypes,
       },
     },
     async execute(_id, p) {
@@ -229,7 +243,7 @@ function semanticSearchTool(ctx: ToolContext): AgentTool {
           beds: p.minBeds,
           baths: p.minBaths,
           sqft: p.minSqft,
-          type: p.propertyType,
+          types: Array.isArray(p.propertyTypes) && p.propertyTypes.length ? p.propertyTypes : undefined,
         }) as Partial<HardFilters>;
         return semanticSearchAgent(String(p.description ?? ""), sessionIdFor(ctx), hints);
       });

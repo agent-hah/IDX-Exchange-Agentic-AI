@@ -1,6 +1,6 @@
 import { getSession, updateSession } from "../../memory/session.ts";
 import type { AgentResult } from "../../types.ts";
-import { fmtPrice } from "../../utils/format.ts";
+import { fmtPrice, typeLabel } from "../../utils/format.ts";
 import { parsePropertyQuery, type PropertyFilters } from "./parser.ts";
 import { searchActiveListings, type ListingRow } from "./queries.ts";
 
@@ -14,12 +14,29 @@ function withoutNulls<T extends object>(o: T): Partial<T> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined)) as Partial<T>;
 }
 
+/** "Irvine · Condo or Townhome · up to $1,500,000 · 3+ beds" — so applied filters are visible. */
+export function describeFilters(f: Partial<PropertyFilters>): string {
+  const types = f.types && f.types.length > 1 ? f.types : f.type ? [f.type] : [];
+  return [
+    f.city,
+    types.length ? types.map(typeLabel).join(" or ") : null,
+    f.maxPrice ? `up to ${fmtPrice(f.maxPrice)}` : null,
+    f.beds ? `${f.beds}+ beds` : null,
+    f.baths ? `${f.baths}+ baths` : null,
+    f.sqft ? `${f.sqft}+ sqft` : null,
+    f.pool ? "private pool" : null,
+    f.hasView ? "view" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function formatCards(listings: ListingRow[]): string {
   return listings
-    .map(({ L_Address, L_City, price, beds, baths, sqft, DaysOnMarket }) =>
+    .map(({ L_Address, L_City, price, beds, baths, sqft, type, DaysOnMarket }) =>
       [
         `*${L_Address}, ${L_City}*`,
-        `${fmtPrice(price)} | ${beds || 0}bd / ${baths || 0}ba | ${sqft || 0} sqft`,
+        `${fmtPrice(price)} | ${beds || 0}bd / ${baths || 0}ba | ${sqft || 0} sqft${type ? ` | ${typeLabel(type)}` : ""}`,
         `🗓 ${DaysOnMarket || 0} days on market`,
       ].join("\n"),
     )
@@ -46,11 +63,14 @@ export async function propertySearchAgent(
     for (const [key, value] of Object.entries(parsed)) {
       if (value !== null) (updates as Record<string, unknown>)[key] = value;
     }
+    // A new type choice replaces the old one, whether it names one type or several.
+    if (updates.types && updates.types.length > 0) updates.type = updates.types[0] ?? null;
+    else if (updates.type) updates.types = null;
     updateSession(userId, { ...updates, conversationStep: (session.conversationStep || 0) + 1 });
     const s = getSession(userId);
     const filters: Partial<PropertyFilters> = {
       city: s.city ?? null, maxPrice: s.maxPrice ?? null, beds: s.beds ?? null, baths: s.baths ?? null,
-      sqft: s.sqft ?? null, type: s.type ?? null, pool: s.pool ?? null, hasView: s.hasView ?? null,
+      sqft: s.sqft ?? null, type: s.type ?? null, types: s.types ?? null, pool: s.pool ?? null, hasView: s.hasView ?? null,
     };
 
     // Follow-up questions until we have enough to search.
@@ -79,7 +99,7 @@ export async function propertySearchAgent(
       status: "success",
       intent,
       data: { filters, listings },
-      response: `Here are the top matches I found:\n\n${formatCards(listings)}`,
+      response: `Here are the top matches I found (${describeFilters(filters)}):\n\n${formatCards(listings)}`,
     };
   } catch (error) {
     console.error("Property Search Agent Error:", error);

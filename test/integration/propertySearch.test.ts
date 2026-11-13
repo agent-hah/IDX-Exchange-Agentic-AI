@@ -37,6 +37,15 @@ test("searchActiveListings respects filters and the 50-row cap", async () => {
   assert.ok(rows.every((r, i) => i === 0 || Number(rows[i - 1]!.price) <= Number(r.price)), "sorted by price");
 });
 
+test("several property types: every listing is a condo or townhome, and cards show the type", async () => {
+  const r = await propertySearchAgent("3 bedroom condos and townhomes in Irvine under $2M", `it_types_${Date.now()}`);
+  assert.ok(r.status === "success" || r.status === "empty", r.response);
+  if (r.status === "success") {
+    for (const l of r.data!.listings!) assert.ok(["Condominium", "Townhouse"].includes(l.type), l.type);
+    assert.match(r.response, /\| (Condo|Townhome)\n/);
+  }
+});
+
 test("impossible budget → empty, not an error", async () => {
   const r = await propertySearchAgent("Find homes in Pasadena under 100k with 5 beds", `it_empty_${Date.now()}`);
   assert.equal(r.status, "empty");

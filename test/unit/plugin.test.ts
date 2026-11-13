@@ -42,7 +42,22 @@ test("tool parameter schemas are well-formed JSON Schema objects", () => {
   }
 });
 
-test("each conversation gets its own session id", () => {
+test("property and semantic search accept several property types; params say not to guess", () => {
+  const byName = Object.fromEntries(registeredTools().map(({ tool }) => [tool.name, tool]));
+  for (const name of ["idx_property_search", "idx_semantic_search"]) {
+    const p = byName[name].parameters.properties;
+    assert.equal(p.propertyTypes.type, "array", name);
+    assert.deepEqual(p.propertyTypes.items.enum, ["SingleFamilyResidence", "Condominium", "Townhouse"]);
+    for (const k of ["maxPrice", "minBeds"]) assert.match(p[k].description, /never guess/, `${name}.${k}`);
+  }
+});
+
+test("each conversation gets its own session id, and /new (new sessionId) starts fresh", () => {
+  assert.equal(sessionIdFor({ sessionKey: "agent:coordinator:wa", sessionId: "s1" }), "openclaw:s1");
+  assert.notEqual(
+    sessionIdFor({ sessionKey: "agent:coordinator:wa", sessionId: "s1" }),
+    sessionIdFor({ sessionKey: "agent:coordinator:wa", sessionId: "s2" }),
+  );
   assert.equal(sessionIdFor({ sessionKey: "a" }), "openclaw:a");
   assert.notEqual(sessionIdFor({ sessionKey: "a" }), sessionIdFor({ sessionKey: "b" }));
   assert.equal(sessionIdFor({ requesterSenderId: "+1555" }), "openclaw:+1555");

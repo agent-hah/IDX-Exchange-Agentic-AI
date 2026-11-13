@@ -142,6 +142,22 @@ for (const { query, expected } of cases) {
   });
 }
 
+test("several property types: condos and townhomes", () => {
+  const f = parsePropertyQuery("3 bedroom condos and townhomes in Irvine under $1.2M");
+  assert.equal(f.type, "Condominium");
+  assert.deepEqual(f.types, ["Condominium", "Townhouse"]);
+  assert.equal(f.beds, 3);
+  assert.equal(f.maxPrice, 1_200_000);
+});
+
+test("type words match whole words only (Oakland is not land)", () => {
+  assert.equal(parsePropertyQuery("Find homes in Oakland").type, null);
+  assert.equal(parsePropertyQuery("Show me townhouses in Irvine").type, "Townhouse");
+  assert.equal(parsePropertyQuery("a condominium in San Diego").type, "Condominium");
+  assert.equal(parsePropertyQuery("single-family homes in Fresno").type, "SingleFamilyResidence");
+  assert.equal(parsePropertyQuery("Find land in Joshua Tree").type, "Unimproved Land");
+});
+
 test("extractCity returns null without 'in <city>'", () => {
   assert.equal(extractCity("Show me homes under $500,000 with a pool"), null);
   assert.equal(extractCity("condos in Newport Beach under 2m"), "Newport Beach");

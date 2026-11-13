@@ -26,6 +26,18 @@ export function fmtInt(n: number | string | null | undefined): string {
   return Number(n ?? 0).toLocaleString("en-US");
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  SingleFamilyResidence: "House",
+  Condominium: "Condo",
+  Townhouse: "Townhome",
+  "Unimproved Land": "Land",
+};
+
+/** "Condominium" → "Condo"; unknown types are split into words ("ManufacturedHome" → "Manufactured Home"). */
+export function typeLabel(type: string): string {
+  return TYPE_LABELS[type] ?? type.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
 /** "2026-09" → "Sep 26". */
 export function fmtMonth(ym: string): string {
   const [y, m] = ym.split("-");

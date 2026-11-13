@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { activeListingWhere, hasAnyFilter } from "../../src/db/listingFilters.ts";
-import { fmtDate, fmtInt, fmtMoney, fmtMonth, fmtPct, fmtPrice } from "../../src/utils/format.ts";
+import { fmtDate, fmtInt, fmtMoney, fmtMonth, fmtPct, fmtPrice, typeLabel } from "../../src/utils/format.ts";
 
 test("activeListingWhere: no filters → active only", () => {
   assert.deepEqual(activeListingWhere({}), { where: "L_Status = 'Active'", params: [] });
@@ -20,6 +20,13 @@ test("activeListingWhere: every filter, in a stable order", () => {
   assert.deepEqual(params, ["Irvine", 1_500_000, 3, 2, 1500, "Condominium", "True", "True"]);
 });
 
+test("activeListingWhere: several types become IN (...) and take precedence over type", () => {
+  const { where, params } = activeListingWhere({ city: "Irvine", type: "Condominium", types: ["Condominium", "Townhouse"] });
+  assert.equal(where, "L_Status = 'Active' AND L_City = ? AND L_Type_ IN (?, ?)");
+  assert.deepEqual(params, ["Irvine", "Condominium", "Townhouse"]);
+  assert.deepEqual(activeListingWhere({ types: [] }).params, []);
+});
+
 test("activeListingWhere: nulls, empty strings and zero are ignored", () => {
   assert.deepEqual(activeListingWhere({ city: "", beds: 0, maxPrice: null }).params, []);
 });
@@ -35,4 +42,7 @@ test("formatting helpers", () => {
   assert.equal(fmtInt(4620), "4,620");
   assert.equal(fmtMonth("2026-09"), "Sep 26");
   assert.equal(fmtDate("2026-09-17"), "Sep 17, 2026");
+  assert.equal(typeLabel("Condominium"), "Condo");
+  assert.equal(typeLabel("SingleFamilyResidence"), "House");
+  assert.equal(typeLabel("ManufacturedHome"), "Manufactured Home");
 });

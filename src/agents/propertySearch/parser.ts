@@ -11,6 +11,8 @@ export interface PropertyFilters {
   baths: number | null;
   sqft: number | null;
   type: string | null;
+  /** Set only when the request names more than one type ("condos and townhomes"). */
+  types?: string[] | null;
   pool: string | null;
   hasView: string | null;
 }
@@ -22,19 +24,25 @@ export function extractCity(text: string): string | null {
   return text.match(CITY_PATTERN)?.[1]?.trim() || null;
 }
 
-const TYPE_MAP: Record<string, string> = {
-  condo: "Condominium",
-  townhome: "Townhouse",
-  "single family": "SingleFamilyResidence",
-  land: "Unimproved Land",
-};
+// Whole words only: a plain substring match turned "Oakland" into vacant land.
+const TYPE_PATTERNS: [RegExp, string][] = [
+  [/\bcondo(minium)?s?\b/i, "Condominium"],
+  [/\btown ?(home|house)s?\b/i, "Townhouse"],
+  [/\bsingle[- ]family\b/i, "SingleFamilyResidence"],
+  [/\bland\b/i, "Unimproved Land"],
+];
+
+/** Property types mentioned in the text, in the order of TYPE_PATTERNS. */
+export function extractTypes(text: string): string[] {
+  return TYPE_PATTERNS.filter(([re]) => re.test(text)).map(([, t]) => t);
+}
 
 export function parsePropertyQuery(query: string): PropertyFilters {
   const priceMatch = query.match(/(?:under|budget|max).*?\$?([\d,.]+)[\s]*(k|m)?/i);
   const bedsMatch = query.match(/(\d+)[\s-]*(bed|beds|bedroom|bedrooms)/i);
   const bathsMatch = query.match(/(\d+(?:\.5)?)[\s-]*(bath|baths|bathroom|bathrooms)/i);
   const sqftMatch = query.match(/(\d+)[\s-]*(sqft|sq ft|square feet|square foot)/i);
-  const typeKey = Object.keys(TYPE_MAP).find((key) => query.toLowerCase().includes(key));
+  const types = extractTypes(query);
 
   let maxPrice: number | null = null;
   if (priceMatch) {
@@ -43,14 +51,16 @@ export function parsePropertyQuery(query: string): PropertyFilters {
     if (priceMatch[2]?.toLowerCase() === "m") maxPrice *= 1000000;
   }
 
-  return {
+  const filters: PropertyFilters = {
     city: extractCity(query),
     maxPrice,
     beds: bedsMatch ? Number(bedsMatch[1]) : null,
     baths: bathsMatch ? Number(bathsMatch[1]) : null,
     sqft: sqftMatch ? Number(sqftMatch[1]) : null,
-    type: typeKey ? (TYPE_MAP[typeKey] ?? null) : null,
+    type: types[0] ?? null,
     pool: /pool/i.test(query) ? "True" : null,
     hasView: /view/i.test(query) ? "True" : null,
   };
+  if (types.length > 1) filters.types = types;
+  return filters;
 }

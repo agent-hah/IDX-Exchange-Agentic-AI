@@ -11,6 +11,7 @@ export interface ListingFilters {
   baths?: number | null; // minimum
   sqft?: number | null; // minimum
   type?: string | null; // L_Type_, e.g. "Condominium"
+  types?: string[] | null; // several L_Type_ values (OR); takes precedence over `type`
   pool?: string | null; // "True"
   hasView?: string | null; // "True"
 }
@@ -29,7 +30,12 @@ export function activeListingWhere(f: ListingFilters): { where: string; params: 
   add("L_Keyword2 >= ?", f.beds);
   add("LM_Dec_3 >= ?", f.baths);
   add("LM_Int2_3 >= ?", f.sqft);
-  add("L_Type_ = ?", f.type);
+  if (f.types && f.types.length > 0) {
+    clauses.push(`L_Type_ IN (${f.types.map(() => "?").join(", ")})`);
+    params.push(...f.types);
+  } else {
+    add("L_Type_ = ?", f.type);
+  }
   add("PoolPrivateYN = ?", f.pool);
   add("ViewYN = ?", f.hasView);
   return { where: clauses.join(" AND "), params };

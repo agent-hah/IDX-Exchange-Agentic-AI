@@ -36,7 +36,7 @@ export interface SemanticHit {
   L_Remarks: string | null;
 }
 
-export type HardFilters = Pick<PropertyFilters, "city" | "maxPrice" | "beds" | "baths" | "sqft" | "type">;
+export type HardFilters = Pick<PropertyFilters, "city" | "maxPrice" | "beds" | "baths" | "sqft" | "type" | "types">;
 
 // ---------------------------------------------------------------------------
 // Candidate filtering
@@ -130,6 +130,7 @@ export async function semanticSearch(
     baths: parsed.baths,
     sqft: parsed.sqft,
     type: parsed.type,
+    types: parsed.types ?? null,
   };
 
   const [index, candidates, queryVec] = await Promise.all([
