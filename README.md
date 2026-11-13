@@ -2,7 +2,7 @@
 
 AI Agentic Engineer internship project for IDX Exchange (Summer 2026).
 
-An OpenClaw-based multi-agent assistant that answers real estate questions over real California MLS data: natural-language property search, multi-turn conversations, and market analytics today, with semantic search, recommendations, RAG, WhatsApp and email workflows to come.
+An OpenClaw-based multi-agent assistant that answers real estate questions over real California MLS data: natural-language property search, multi-turn conversations, market analytics and semantic search today, with recommendations, RAG, WhatsApp and email workflows to come.
 
 ## Status
 
@@ -14,7 +14,8 @@ An OpenClaw-based multi-agent assistant that answers real estate questions over 
 | 3 | MLS database integration | Done |
 | 4 | Conversational property search | Done |
 | 5 | Market statistics agent | Done |
-| 6–12 | Embeddings, recommendations, RAG, orchestration, WhatsApp, email, capstone | Upcoming |
+| 6 | Embeddings & semantic search | Done |
+| 7–12 | Recommendations, RAG, orchestration, WhatsApp, email, capstone | Upcoming |
 
 See [architecture_documentation.md](architecture_documentation.md) for how the pieces fit together and a file-by-file code map.
 
@@ -93,6 +94,11 @@ EMAIL_PASSWORD=your_gmail_app_password   # a Gmail app password, not your login 
 
 # Optional: pin the end of market-stats windows (YYYY-MM-DD).
 # MARKET_ANCHOR_DATE=2026-09-17
+
+# Optional: Week 6 embedding settings (defaults shown).
+# GEMINI_EMBED_MODEL=gemini-embedding-2
+# EMBED_DIMS=768
+# EMBED_TPM=25000   # tokens/min budget for the indexer; raise on a paid tier
 ```
 
 `.env` is git-ignored. Never commit it.
@@ -105,16 +111,30 @@ openclaw channels login --channel whatsapp
 
 Scan the QR code from WhatsApp → **Settings → Linked Devices → Link a device**.
 
-### 6. Check that everything works
+### 6. Build the listing embeddings (Week 6)
+
+Semantic search needs every active listing embedded once. The indexer saves each batch as it goes, so it's safe to stop and re-run.
+
+```bash
+npm run embed:listings -- --dry-run                               # counts + time estimate, no API calls
+npm run embed:listings -- --city Pasadena --city Irvine --city "San Diego"   # a few cities first (minutes)
+npm run embed:listings                                            # everything (free tier: overnight)
+```
+
+On the Gemini free tier, the full ~55K listings takes many hours because of the tokens-per-minute limit. If it hits the daily quota, it stops cleanly; run it again later and it picks up where it left off.
+
+### 7. Check that everything works
 
 ```bash
 npm run test:parser          # Week 2 parser tests (no database needed)
 npm run test:market-parser   # Week 5 parser tests (no database needed)
 npm run test:search          # Weeks 3–4 multi-turn search against MySQL
 npm run test:market          # Week 5 market stats against MySQL
+npm run test:semantic-offline   # Week 6 routing, vector math, listing text (no DB or API key)
+npm run test:semantic           # Week 6 semantic search (needs MySQL, Gemini, and embedded listings)
 ```
 
-Then send a test message to the agent over WhatsApp, e.g. *"Find homes in Irvine"* or *"Is now a good time to buy in San Diego?"*
+Then send a test message to the agent over WhatsApp, e.g. *"Find homes in Irvine"*, *"Is now a good time to buy in San Diego?"* or *"charming craftsman with mountain views and character"*
 
 ---
 
@@ -127,6 +147,9 @@ Then send a test message to the agent over WhatsApp, e.g. *"Find homes in Irvine
 | `npm run test:market-parser` | Week 5: market question parsing and intent detection |
 | `npm run test:market` | Week 5: market reports end to end, plus SQL sanity checks |
 | `npm run export:market` | Writes Markdown market summaries to `docs/market_reports/` (Week 8 RAG source). Pass city names to override the default list: `npm run export:market -- Irvine "San Diego"` |
+| `npm run embed:listings` | Week 6: embed active listings into `listing_embeddings`. Flags: `--dry-run`, `--city <name>` (repeatable), `--limit <n>`, `--max-chars <n>`, `--force` |
+| `npm run test:semantic-offline` | Week 6: routing heuristic, vector math, listing text (no DB or API key) |
+| `npm run test:semantic` | Week 6: semantic search end to end, filters, self-retrieval and routing checks |
 | `npm run typecheck` | TypeScript type check (`tsc --noEmit`) |
 
 Any file can also be run directly: `node src/tests/testMarketStats.ts`.
@@ -152,6 +175,12 @@ Any file can also be run directly: `node src/tests/testMarketStats.ts`.
 
 Questions without a location get a statewide leaderboard of the busiest cities. See the Week 5 section of the architecture doc for details.
 
+**Week 6: Embeddings & semantic search.** `semanticSearchAgent` handles descriptive queries like *"charming craftsman with mountain views and character"*.
+- **Indexing (once):** each active listing's details and remarks are embedded with Gemini (`gemini-embedding-2`, 768 dimensions) and stored in a new `listing_embeddings` table.
+- **Search:** the query is embedded with one API call, compared against every stored vector in memory (cosine similarity), and the top 5 active listings come back.
+- **Hybrid filters:** limits the Week 2 parser finds (city, max price, beds, baths, sqft, type) narrow the candidates first.
+- **Session:** results are saved to `lastResults` for the Week 7 recommendation engine.
+
 ---
 
 ## Repository structure
@@ -168,8 +197,16 @@ src/
     marketParser.ts     Week 5: NL → market filters, market-question detection
     marketQueries.ts    Week 5: market analytics SQL
     marketStatsSkill.ts Week 5: market stats agent + WhatsApp formatting
+    semanticIntent.ts   Week 6: detects descriptive (semantic) queries
+    semanticSearch.ts   Week 6: semantic search agent + reusable vector ranking
+  embeddings/
+    gemini.ts           Week 6: Gemini embedding client (rate limiting, retries)
+    listingText.ts      Week 6: the text embedded for each listing
+    store.ts            Week 6: listing_embeddings table + in-memory vector index
+    vectorMath.ts       Week 6: normalize, dot product, BLOB encoding, top-k
   scripts/
     exportMarketReports.ts  Week 5 → Week 8: Markdown market summaries
+    buildListingEmbeddings.ts  Week 6: resumable listing indexer
   tests/                Test scripts (see Commands)
 openclaw/               OpenClaw framework (git submodule)
 openclaw.json           Points OpenClaw at src/index.ts → handleOpenClawPayload
@@ -200,3 +237,5 @@ The handbook describes `california_sold` as covering 2021–2025. The copy used 
 - **`npx ts-node` crashes with `Cannot read properties of undefined (reading 'fileExists')`**: ts-node does not support TypeScript 7. Run files with `node` instead (see Commands).
 - **`SyntaxError: ... does not provide an export named 'X'`**: a type is being imported without the `type` keyword. Use `import type { X }` or `import { type X }`, and include the `.ts` extension in relative imports.
 - **Market stats SQL errors near `OVER`**: MySQL is older than 8.0.
+- **Semantic search says "isn't set up yet"**: no embeddings exist; run `npm run embed:listings`.
+- **`Gemini embeddings 429` repeating, or the indexer stops with "daily embedding quota reached"**: that's the free-tier limit. Leave it and re-run later, or lower `EMBED_TPM` in `.env` if 429s are frequent.

@@ -8,7 +8,10 @@
     "test:search": "node src/tests/testIntegration.ts",
     "test:market-parser": "node src/tests/testMarketParser.ts",
     "test:market": "node src/tests/testMarketStats.ts",
-    "export:market": "node src/scripts/exportMarketReports.ts"
+    "export:market": "node src/scripts/exportMarketReports.ts",
+    "test:semantic-offline": "node src/tests/testSemanticOffline.ts",
+    "test:semantic": "node src/tests/testSemanticSearch.ts",
+    "embed:listings": "node src/scripts/buildListingEmbeddings.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

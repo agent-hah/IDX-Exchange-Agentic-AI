@@ -73,7 +73,7 @@ The system connects to a local MySQL schema.
 * **`rets_property`:** The active listing database containing 130+ fields, used for live search and discovery. It features a `FULLTEXT` index on listing remarks to support semantic vector search.
 * **`california_sold`:** The historical comps table containing 46 fields, utilized for market analytics, trend validation, and price modeling.
 
-See [Section 8](#8-data-notes) for what the local copy of the data actually contains.
+See [Section 9](#9-data-notes) for what the local copy of the data actually contains. Week 6 adds a third table, `listing_embeddings` ([Section 7](#7-week-6-embeddings--semantic-search)).
 
 ---
 
@@ -83,7 +83,7 @@ At a high level, OpenClaw takes the user's request from a conversation channel t
 
 ---
 
-## 5. Current Implementation (Weeks 2–5)
+## 5. Current Implementation (Weeks 2–6)
 
 Sections 1–4 describe the target design. This section describes what is built today.
 
@@ -96,10 +96,13 @@ WhatsApp / OpenClaw Gateway
 src/index.ts  handleOpenClawPayload()          ← entry point named in openclaw.json
       │  temporary router until the Week 9 orchestrator
       │
-      ├── isMarketQuestion(text)? ──yes──► marketStatsAgent()   (Week 5)
+      ├── isMarketQuestion(text)? ──yes──► marketStatsAgent()     (Week 5)
       │                                        └── california_sold, rets_property (inventory)
       │
-      └── otherwise ─────────────────────► handleMessage()      (Weeks 2–4)
+      ├── isSemanticQuery(text)?  ──yes──► semanticSearchAgent()  (Week 6)
+      │                                        └── Gemini (query embedding), listing_embeddings, rets_property
+      │
+      └── otherwise ─────────────────────► handleMessage()        (Weeks 2–4)
                                                └── rets_property
       ▼
 { status, intent, response, data? }  →  response text sent back to the user
@@ -121,11 +124,18 @@ Every agent follows the same three layers: **parse** free text into a typed filt
 | `src/skills/marketQueries.ts` | 5 | All market analytics SQL; `getMarketReport()` assembles a full report |
 | `src/skills/marketStatsSkill.ts` | 5 | `marketStatsAgent()`, WhatsApp formatting, buyer/seller market read |
 | `src/scripts/exportMarketReports.ts` | 5→8 | Writes per-city Markdown summaries to `docs/market_reports/` for RAG indexing |
+| `src/embeddings/gemini.ts` | 6 | Gemini `batchEmbedContents` client: task prefixes, rate limiting, 429 retries, daily-quota stop |
+| `src/embeddings/listingText.ts` | 6 | `buildListingText()`: the text embedded for a listing; `textHash()` for change detection |
+| `src/embeddings/store.ts` | 6 | `listing_embeddings` table, upserts, in-memory `VectorIndex` |
+| `src/embeddings/vectorMath.ts` | 6 | normalize, dot product, float32 ⇄ BLOB, top-k |
+| `src/scripts/buildListingEmbeddings.ts` | 6 | Resumable indexer (`npm run embed:listings`) |
+| `src/skills/semanticIntent.ts` | 6 | `isSemanticQuery()`: routes descriptive queries to semantic search |
+| `src/skills/semanticSearch.ts` | 6 | `semanticSearchAgent()`, `semanticSearch()`, reusable `rankBySimilarity()` |
 | `src/tests/*` | 2–5 | Parser tests (no DB) and integration tests (live DB) |
 
 ### Sessions
 
-`session.ts` holds one `UserSession` per `userId` in a `Map`. It stores the accumulated property filters, `lastResults`, and `conversationStep`. State lives in memory, so it resets when the process restarts. The Week 5 market agent reads the session's `city` to answer follow-ups like *"how's the market there?"*, but never writes to the session.
+`session.ts` holds one `UserSession` per `userId` in a `Map`. It stores the accumulated property filters, `lastResults`, and `conversationStep`. State lives in memory, so it resets when the process restarts. The Week 5 market agent reads the session's `city` to answer follow-ups like *"how's the market there?"*, but never writes to the session. The Week 6 semantic agent reads `city` too, and writes `lastResults` (and `city`, when the query names one) so the Week 7 recommendation engine can find listings similar to one the user just saw.
 
 ---
 
@@ -216,7 +226,106 @@ The agent returns it as `data`, so later weeks can reuse it:
 
 ---
 
-## 7. Runtime and Tooling
+## 7. Week 6: Embeddings & Semantic Search
+
+### Goal
+
+Go beyond keyword filters: a query like *"charming craftsman with mountain views and character"* should find matching listings even when no listing uses those exact words. Deliverable: a skill that takes a free-text description and returns the **top 5 most similar active listings** from `rets_property`, ranked by embedding cosine similarity.
+
+### Design
+
+```text
+INDEXING (once, offline)                          SEARCH (every query)
+──────────────────────────                        ─────────────────────────────
+rets_property (Active)                            "charming craftsman with mountain views"
+   │ buildListingText()                               │ parsePropertyQuery() → hard filters
+   ▼                                                  │   (city, max price, beds, baths, sqft, type)
+"Single Family Residence in Pasadena, CA.             │ embedQuery() ── 1 Gemini call
+ 3 beds, 2 baths, 1850 sq ft, built 1924.             ▼
+ Price $1,495,000. Style: Craftsman. ..."         query vector (768-d, normalized)
+   │ embedBatch() ── Gemini batchEmbedContents        │ candidateIds() ── SQL over rets_property
+   ▼                                                  ▼
+listing_embeddings (MySQL BLOBs)  ── load ──►     in-memory VectorIndex ── dot products ── top 5
+                                                      │ fetchListings()
+                                                      ▼
+                                                  WhatsApp cards + session.lastResults
+```
+
+**Why embed listings once instead of per query** (the handbook's sample code embeds on the fly):
+- Each search costs one API call instead of thousands.
+- Search latency is one call plus milliseconds of math.
+- Week 7 reuses the same stored vectors to find listings similar to a given listing.
+
+### Model and settings
+
+| Setting | Value | Why |
+|---|---|---|
+| Model | `gemini-embedding-2` | The project already uses a Gemini key; this is Google's current embedding model |
+| Dimensions | 768 | One of Google's recommended sizes; 4× smaller than the 3072 default, with little quality loss |
+| Task format | documents `title: <type in city> \| text: <listing>`; queries `task: search result \| query: <text>` | `gemini-embedding-2` takes the task as a text prefix instead of a `task_type` field |
+| Normalization | Every vector is L2-normalized | Cosine similarity becomes a plain dot product |
+
+All of these are configurable in `.env` (`GEMINI_EMBED_MODEL`, `EMBED_DIMS`). Vectors are tagged with model and dims, so switching either re-embeds automatically instead of mixing incompatible vectors.
+
+### What gets embedded
+
+`buildListingText()` combines the handbook's structured fields (type, city, beds, baths, sqft, year built, price) with the descriptive ones (`ArchitecturalStyle`, `View`, private pool, `AssociationAmenities`, `SubdivisionName`), then appends `L_Remarks`. Remarks are cleaned of HTML and entities and capped at 1,000 characters, cut at a sentence boundary when possible; the average is about 1,300. The cap keeps the full index around 15M tokens on the free tier, and the opening of a listing description is usually the most descriptive part.
+
+### Storage
+
+MySQL 8.4 has no vector column type, so `listing_embeddings` stores each vector as a `MEDIUMBLOB` of float32s:
+
+| Column | Notes |
+|---|---|
+| `L_ListingID` | Primary key; copies `rets_property.L_ListingID`'s exact type and collation, so joins never fail |
+| `model`, `dims` | Which embedding space the vector belongs to |
+| `text_hash` | SHA-1 of the embedded text; unchanged listings are skipped on re-runs |
+| `embedding` | 768 × 4 bytes ≈ 3 KB |
+
+At search time, all vectors for the current model load into one flat `Float32Array`: 55K × 768 ≈ 170 MB, loaded in pages of 5,000. Scoring all of them takes tens of milliseconds, so a separate vector database isn't needed at this scale. The index reloads automatically when the row count changes, e.g. while the indexer is still running.
+
+### Hybrid filtering
+
+Pure semantic search ignores hard limits: a "$500K" in the query only nudges the vector. So before ranking, the Week 2 parser extracts city, max price, beds, baths, sqft and type, and SQL narrows the candidates to active listings that satisfy them. Two details:
+- **City check:** the parsed city is checked against the actual `L_City` values, so a phrase like "in the hills" isn't treated as a city.
+- **Left to the embedding:** pool and view are not hard filters, because the remarks describe them better than the Y/N flags.
+
+### Indexer (`npm run embed:listings`)
+
+- **Free tier pacing:** a sliding-window limiter keeps requests under `EMBED_TPM` tokens and `EMBED_RPM` requests per minute (defaults 25,000 and 90, below the free-tier limits). Batches are sized to half the per-minute token budget, at most 100 listings each.
+- **429 errors:** retried after the delay Gemini suggests (`RetryInfo`), otherwise with exponential backoff.
+- **Daily quota:** raises `DailyQuotaError`, and the run stops cleanly.
+- **Resumable:** every batch is upserted as soon as it returns, and Ctrl-C finishes the current batch first. Re-running skips listings whose text hash, model and dims are unchanged.
+- **Flags:** `--dry-run` (counts, time estimate, sample text), `--city` (repeatable), `--limit`, `--max-chars`, `--force`.
+
+At the free-tier budget the full ~55K listings takes many hours, so the practical order is: a few cities first for development and demos, then the full run overnight.
+
+### Routing
+
+`isSemanticQuery()` strips everything the structured parser understands, plus filler words. That covers city, prices and numbers, beds/baths, sqft, property type, pool/view, and words like "find", "homes", "under". If two or more descriptive words remain, the query goes to semantic search:
+
+| Message | Leftover words | Route |
+|---|---|---|
+| charming craftsman with mountain views and character | charming, craftsman, mountain, character | semantic |
+| 3-bedroom condos in Irvine under $1.5M with a pool | (none) | structured |
+| my maximum budget is 900k | (none) | structured |
+
+Phrases like "similar to" or "vibe", and a `semantic:` prefix, force semantic search. Market questions are checked first. The Week 9 orchestrator will replace this heuristic with proper intent classification.
+
+### Testing
+
+- `npm run test:semantic-offline` runs 25 checks without a database or API key: routing cases, vector math (normalization, BLOB round-trip, unaligned buffers, top-k), and listing-text building and hashing.
+- `npm run test:semantic` runs live:
+  - five descriptive queries, including the handbook example
+  - top-5 count, results sorted by similarity, similarities in range
+  - hard filters respected (Pasadena, ≤ $2M)
+  - re-embedding a stored listing reproduces its vector, and that listing finds itself in the top 3
+  - routing across all three agents
+- Before release, the indexer and search were also run against SQLite with a mock Gemini endpoint. That covered the request format, 429 retry, daily-quota stop, resume, skipping unchanged listings, `--force`, and filter handling.
+
+---
+
+## 8. Runtime and Tooling
 
 - TypeScript runs directly on Node (24.22.1+, which the OpenClaw submodule requires) using built-in type stripping; there is no build step.
 - Because of that, type-only imports must use `import type` / `import { type X }`, and relative imports include the `.ts` extension.
@@ -225,7 +334,7 @@ The agent returns it as `data`, so later weeks can reuse it:
 
 ---
 
-## 8. Data Notes
+## 9. Data Notes
 
 Profiling the local `california_sold` import (October 2026):
 
@@ -234,3 +343,4 @@ Profiling the local `california_sold` import (October 2026):
 - **4 rows have typo close dates** (2028, 2030 ×2, 2072); they are ignored because they are after today
 - Every `CloseDate` is well-formed `YYYY-MM-DD`
 - The handbook describes 2021–2025 coverage. With ~6 months of data, market reports show a 6-month trend and no year-over-year comparison. Importing a longer dataset turns YoY on automatically, with no code changes.
+- `rets_property` has **55,212 rows, all active and residential**; 54,891 have remarks, averaging about 1,300 characters. Biggest cities: Los Angeles (4,015), San Diego (2,198), San Jose (1,047), Irvine (723). MySQL version is 8.4.
