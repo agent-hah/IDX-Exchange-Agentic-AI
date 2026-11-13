@@ -7,8 +7,9 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { closeConnection } from "../db/connection.ts";
-import { getMarketReport, type MarketReport } from "../skills/marketQueries.ts";
-import { fmtMoney, marketRead, windowLabel } from "../skills/marketStatsSkill.ts";
+import { getMarketReport, type MarketReport } from "../agents/marketStats/queries.ts";
+import { marketRead, windowLabel } from "../agents/marketStats/agent.ts";
+import { fmtMoney } from "../utils/format.ts";
 
 const DEFAULT_CITIES = [
   "Los Angeles", "San Diego", "San Jose", "San Francisco", "Sacramento",

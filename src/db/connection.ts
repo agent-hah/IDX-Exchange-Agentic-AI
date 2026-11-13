@@ -1,11 +1,8 @@
-import "dotenv/config";
 import mysql from "mysql2/promise";
+import { config } from "../config.ts";
 
 const pool = mysql.createPool({
-  host: process.env.MYSQL_HOST || "localhost",
-  user: process.env.MYSQL_USER || "idx_user",
-  password: process.env.MYSQL_PASSWORD || "your_secure_password",
-  database: process.env.MYSQL_DATABASE || "idx_exchange",
+  ...config.mysql,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,

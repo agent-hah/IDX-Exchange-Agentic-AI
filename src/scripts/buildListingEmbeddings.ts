@@ -16,6 +16,7 @@
  * Safe to stop (Ctrl-C) and re-run at any time: each batch is saved as soon
  * as it returns, and listings whose text is unchanged are skipped.
  */
+import { config } from "../config.ts";
 import { closeConnection, query } from "../db/connection.ts";
 import {
   DailyQuotaError,
@@ -55,7 +56,7 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-const TPM = Number(process.env.EMBED_TPM || 25_000);
+const TPM = config.embeddings.tokensPerMinute;
 // Keep each request well under the per-minute token budget.
 const BATCH_TOKEN_BUDGET = Math.min(Math.floor(TPM / 2), 60_000);
 const BATCH_MAX_ITEMS = 100;

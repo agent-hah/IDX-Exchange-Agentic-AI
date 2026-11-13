@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { config } from "../config.ts";
 
 /**
  * Week 6 — the text that represents a listing in embedding space.
@@ -23,7 +24,7 @@ export interface ListingTextRow {
   L_Remarks: string | null;
 }
 
-export const DEFAULT_MAX_REMARK_CHARS = Number(process.env.EMBED_MAX_REMARK_CHARS || 1000);
+export const DEFAULT_MAX_REMARK_CHARS = config.embeddings.maxRemarkChars;
 
 /** "SingleFamilyResidence" → "Single Family Residence", "Pool,Tennis" → "Pool, Tennis" */
 function humanize(s: string | null | undefined): string {

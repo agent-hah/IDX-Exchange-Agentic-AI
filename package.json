@@ -3,15 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test test/unit/*.test.ts",
+    "test:db": "node --test --test-concurrency=1 test/integration/propertySearch.test.ts test/integration/marketStats.test.ts",
+    "test:semantic": "node --test test/integration/semanticSearch.test.ts",
     "typecheck": "tsc --noEmit",
-    "test:parser": "node src/tests/testSearch.ts",
-    "test:search": "node src/tests/testIntegration.ts",
-    "test:market-parser": "node src/tests/testMarketParser.ts",
-    "test:market": "node src/tests/testMarketStats.ts",
-    "export:market": "node src/scripts/exportMarketReports.ts",
-    "test:semantic-offline": "node src/tests/testSemanticOffline.ts",
-    "test:semantic": "node src/tests/testSemanticSearch.ts",
-    "embed:listings": "node src/scripts/buildListingEmbeddings.ts"
+    "embed:listings": "node src/scripts/buildListingEmbeddings.ts",
+    "export:market": "node src/scripts/exportMarketReports.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

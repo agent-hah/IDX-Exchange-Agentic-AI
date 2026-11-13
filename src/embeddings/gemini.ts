@@ -1,4 +1,4 @@
-import "dotenv/config";
+import { config, requireGeminiKey } from "../config.ts";
 import { normalize } from "./vectorMath.ts";
 
 /**
@@ -16,14 +16,14 @@ import { normalize } from "./vectorMath.ts";
  * indexer can stop cleanly and resume later.
  */
 
-export const EMBED_MODEL = process.env.GEMINI_EMBED_MODEL || "gemini-embedding-2";
-export const EMBED_DIMS = Number(process.env.EMBED_DIMS || 768);
+export const EMBED_MODEL = config.embeddings.model;
+export const EMBED_DIMS = config.embeddings.dims;
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const MAX_BATCH = 100; // requests per batchEmbedContents call
 
 // Free-tier defaults with headroom; raise these if you're on a paid tier.
-const TPM_LIMIT = Number(process.env.EMBED_TPM || 25_000);
-const RPM_LIMIT = Number(process.env.EMBED_RPM || 90);
+const TPM_LIMIT = config.embeddings.tokensPerMinute;
+const RPM_LIMIT = config.embeddings.requestsPerMinute;
 
 export type EmbedKind = "query" | "document";
 
@@ -92,8 +92,7 @@ export async function embedBatch(
 ): Promise<{ vectors: Float32Array[]; tokens: number }> {
   if (inputs.length === 0) return { vectors: [], tokens: 0 };
   if (inputs.length > MAX_BATCH) throw new Error(`embedBatch: max ${MAX_BATCH} inputs per call`);
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY is not set in .env");
+  const apiKey = requireGeminiKey();
 
   const texts = inputs.map((i) => formatInput(i.text, kind, i.title));
   const estTokens = texts.reduce((s, t) => s + estimateTokens(t), 0);

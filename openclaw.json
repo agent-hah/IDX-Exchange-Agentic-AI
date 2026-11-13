@@ -1,4 +1,0 @@
-{
-  "entryPoint": "src/index.ts",
-  "handler": "handleOpenClawPayload"
-}

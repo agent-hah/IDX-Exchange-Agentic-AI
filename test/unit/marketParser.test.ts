@@ -1,6 +1,7 @@
-/** Week 5 parser tests — no database needed.  node src/tests/testMarketParser.ts */
-import { parseMarketQuery, isMarketQuestion } from "../skills/marketParser.ts";
-import type { MarketFilters } from "../skills/marketQueries.ts";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { isMarketQuestion, parseMarketQuery } from "../../src/agents/marketStats/parser.ts";
+import type { MarketFilters } from "../../src/agents/marketStats/queries.ts";
 
 const f = (p: Partial<MarketFilters>): MarketFilters => ({
   city: null, zip: null, subType: null, months: 12, ...p,
@@ -31,27 +32,9 @@ const intentCases: [string, boolean][] = [
   ["Single family with at least 3 beds", false],
 ];
 
-let pass = 0;
-let total = 0;
 for (const [q, expected] of parseCases) {
-  total++;
-  const actual = parseMarketQuery(q);
-  if (JSON.stringify(actual) === JSON.stringify(expected)) {
-    pass++;
-    console.log(`PASS parse: "${q}"`);
-  } else {
-    console.error(`FAIL parse: "${q}"\n   expected ${JSON.stringify(expected)}\n   actual   ${JSON.stringify(actual)}`);
-  }
+  test(`parses: ${q}`, () => assert.deepEqual(parseMarketQuery(q), expected));
 }
 for (const [q, expected] of intentCases) {
-  total++;
-  const actual = isMarketQuestion(q);
-  if (actual === expected) {
-    pass++;
-    console.log(`PASS intent: "${q}" -> ${actual}`);
-  } else {
-    console.error(`FAIL intent: "${q}" expected ${expected}, got ${actual}`);
-  }
+  test(`isMarketQuestion=${expected}: ${q}`, () => assert.equal(isMarketQuestion(q), expected));
 }
-console.log(`\nResults: ${pass}/${total} passed.`);
-if (pass !== total) process.exit(1);

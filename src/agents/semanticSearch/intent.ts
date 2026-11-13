@@ -1,3 +1,5 @@
+import { extractCity } from "../propertySearch/parser.ts";
+
 /**
  * Week 6 — decide whether a message is a descriptive (semantic) search.
  *
@@ -25,7 +27,7 @@ const EXPLICIT = /\b(similar to|vibe|aesthetic|reminds? me of|describe[ds]?)\b|^
 
 export function descriptiveWords(text: string): string[] {
   const t = text.replace(/^semantic:\s*/i, "");
-  const city = (parsePropertyQueryCity(t) ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const city = (extractCity(t) ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   return t
     .toLowerCase()
     .replace(/\$?\d[\d,.]*\s*(k|m|mm)?\b/g, " ") // prices, counts, sqft numbers
@@ -34,11 +36,6 @@ export function descriptiveWords(text: string): string[] {
     .filter((w) => w.length >= 3 && !FILLER.has(w) && !city.includes(w));
 }
 
-/** Same city pattern as propertySearch.parsePropertyQuery (kept synchronous here). */
-function parsePropertyQueryCity(text: string): string | null {
-  const m = text.match(/in ([A-Za-z\s]+?)(?:\s+under|\s+with|\s+at|$)/);
-  return m?.[1]?.trim() ?? null;
-}
 
 export function isSemanticQuery(text: string): boolean {
   if (EXPLICIT.test(text)) return true;

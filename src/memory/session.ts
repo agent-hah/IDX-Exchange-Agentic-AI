@@ -1,23 +1,30 @@
-import type { PropertyFilters } from "../skills/propertySearch.ts";
+import type { PropertyFilters } from "../agents/propertySearch/parser.ts";
 
+/**
+ * Per-user conversation state (Week 4). In memory, so it resets when the
+ * process restarts; revisit before the WhatsApp weeks.
+ *
+ * Writers: propertySearch (filters), semanticSearch (lastResults, city).
+ * Readers: all agents (city as a fallback location).
+ */
 export interface UserSession extends Partial<PropertyFilters> {
-  lastResults?: any[]; 
+  lastResults?: unknown[];
   conversationStep: number;
 }
 
 const sessions = new Map<string, UserSession>();
 
 export function getSession(userId: string): UserSession {
-  if (!sessions.has(userId)) {
-
-    sessions.set(userId, { conversationStep: 0 });
+  let s = sessions.get(userId);
+  if (!s) {
+    s = { conversationStep: 0 };
+    sessions.set(userId, s);
   }
-  return sessions.get(userId)!;
+  return s;
 }
 
 export function updateSession(userId: string, updates: Partial<UserSession>) {
-  const session = getSession(userId);
-  sessions.set(userId, { ...session, ...updates });
+  sessions.set(userId, { ...getSession(userId), ...updates });
 }
 
 export function clearSession(userId: string) {

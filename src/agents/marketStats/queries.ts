@@ -1,4 +1,5 @@
-import { query } from "../db/connection.ts";
+import { config } from "../../config.ts";
+import { query } from "../../db/connection.ts";
 
 /**
  * Week 5 — Market Statistics query layer over california_sold.
@@ -166,7 +167,7 @@ let cachedAnchor: string | null = null;
 
 export async function getAnchorDate(): Promise<string> {
   if (cachedAnchor) return cachedAnchor;
-  const override = process.env.MARKET_ANCHOR_DATE; // optional, YYYY-MM-DD
+  const override = config.market.anchorDate; // optional, YYYY-MM-DD
   if (override && /^\d{4}-\d{2}-\d{2}$/.test(override)) {
     cachedAnchor = override;
     return override;

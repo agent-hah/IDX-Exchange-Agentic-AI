@@ -1,4 +1,4 @@
-import type { MarketFilters } from "./marketQueries.ts";
+import type { MarketFilters } from "./queries.ts";
 
 /**
  * Week 5 — parse free-text market questions into MarketFilters.

@@ -1,12 +1,14 @@
-import { parseMarketQuery } from "./marketParser.ts";
+import { parseMarketQuery } from "./parser.ts";
 import {
   addDays,
   getMarketReport,
   getCityLeaderboard,
   type MarketFilters,
   type MarketReport,
-} from "./marketQueries.ts";
-import { getSession } from "../memory/session.ts";
+} from "./queries.ts";
+import { getSession } from "../../memory/session.ts";
+import type { AgentResult } from "../../types.ts";
+import { fmtDate, fmtMoney, fmtMonth, fmtPct } from "../../utils/format.ts";
 
 const shiftDay = (d: string) => addDays(d, 1);
 
@@ -17,30 +19,6 @@ const shiftDay = (d: string) => addDays(d, 1);
  * Returns the raw report in `data` so the Week 9 orchestrator and the Week 8
  * RAG indexer can reuse it.
  */
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-export function fmtMoney(n: number | null): string {
-  if (n === null) return "n/a";
-  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(n) >= 10_000) return `$${Math.round(n / 1000)}K`;
-  return `$${Math.round(n).toLocaleString("en-US")}`;
-}
-
-function fmtPct(n: number | null, signed = true): string {
-  if (n === null) return "n/a";
-  return `${signed && n > 0 ? "+" : ""}${n.toFixed(1)}%`;
-}
-
-function fmtMonth(ym: string): string {
-  const [y, m] = ym.split("-");
-  return `${MONTHS[Number(m) - 1] ?? m} ${y?.slice(2)}`;
-}
-
-function fmtDate(ymd: string): string {
-  const [y, m, d] = ymd.split("-");
-  return `${MONTHS[Number(m) - 1]} ${Number(d)}, ${y}`;
-}
 
 const SUBTYPE_LABEL: Record<string, string> = {
   Condominium: "Condos",
@@ -141,7 +119,7 @@ export function formatReportForWhatsApp(r: MarketReport): string {
   return lines.join("\n");
 }
 
-export async function marketStatsAgent(message: string, userId?: string) {
+export async function marketStatsAgent(message: string, userId?: string): Promise<AgentResult> {
   try {
     const filters = parseMarketQuery(message);
 
@@ -155,7 +133,7 @@ export async function marketStatsAgent(message: string, userId?: string) {
     if (!filters.city && !filters.zip) {
       const { window, rows } = await getCityLeaderboard(filters.months, 10);
       if (rows.length === 0) {
-        return { status: "empty", intent: "market_stats", response: "I couldn't find any closed residential sales in the data window." };
+        return { status: "empty" as const, intent: "market_stats" as const, response: "I couldn't find any closed residential sales in the data window." };
       }
       const body = rows
         .map(
@@ -164,8 +142,8 @@ export async function marketStatsAgent(message: string, userId?: string) {
         )
         .join("\n");
       return {
-        status: "success",
-        intent: "market_stats",
+        status: "success" as const,
+        intent: "market_stats" as const,
         data: { leaderboard: rows, window },
         response: `📊 *Most active CA markets* (${window.first_day > shiftDay(window.start) ? `${fmtDate(window.first_day)} – ${fmtDate(window.end)}` : `${filters.months} mo ending ${fmtDate(window.end)}`})\n\n${body}\n\nAsk about a specific city or ZIP for the full breakdown, e.g. "Is now a good time to buy in San Diego?"`,
       };
@@ -174,8 +152,8 @@ export async function marketStatsAgent(message: string, userId?: string) {
     const report = await getMarketReport(filters);
     if (report.current.sold_count === 0) {
       return {
-        status: "empty",
-        intent: "market_stats",
+        status: "empty" as const,
+        intent: "market_stats" as const,
         data: report,
         response: `I couldn't find closed residential sales for ${describeLocation(filters)} in ${windowLabel(report)}. Check the spelling, or try a nearby city or ZIP code.`,
       };
@@ -183,16 +161,16 @@ export async function marketStatsAgent(message: string, userId?: string) {
 
     const thin = report.current.sold_count < 10 ? `\n\n⚠️ Only ${report.current.sold_count} sales in this window, so treat these numbers as rough.` : "";
     return {
-      status: "success",
-      intent: "market_stats",
+      status: "success" as const,
+      intent: "market_stats" as const,
       data: report,
       response: formatReportForWhatsApp(report) + thin,
     };
   } catch (error) {
     console.error("Market Stats Skill Error:", error);
     return {
-      status: "error",
-      intent: "market_stats",
+      status: "error" as const,
+      intent: "market_stats" as const,
       response: "Sorry, I hit an issue while pulling market data. Please try again.",
     };
   }
