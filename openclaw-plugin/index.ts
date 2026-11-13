@@ -24,6 +24,7 @@ import { propertySearchAgent } from "../src/agents/propertySearch/agent.ts";
 import type { PropertyFilters } from "../src/agents/propertySearch/parser.ts";
 import { semanticSearchAgent } from "../src/agents/semanticSearch/agent.ts";
 import type { HardFilters } from "../src/agents/semanticSearch/search.ts";
+import { recommendationAgent } from "../src/agents/recommendation/agent.ts";
 import { clearSession } from "../src/memory/session.ts";
 import type { AgentResult } from "../src/types.ts";
 
@@ -52,28 +53,47 @@ interface AgentTool {
    * and smaller models answer from memory instead of finding it.
    */
   catalogMode?: "direct-only";
-  execute: (toolCallId: string, params: any, signal?: AbortSignal) => Promise<ToolResult>;
+  execute: (
+    toolCallId: string,
+    params: any,
+    signal?: AbortSignal,
+  ) => Promise<ToolResult>;
 }
 interface PluginApi {
   /** Original entry file (OpenClaw may run a copy from a temp folder). */
   source?: string;
   rootDir?: string;
   pluginConfig?: Record<string, unknown>;
-  registerTool: (factory: (ctx: ToolContext) => AgentTool, opts: { name: string }) => void;
+  registerTool: (
+    factory: (ctx: ToolContext) => AgentTool,
+    opts: { name: string },
+  ) => void;
 }
 type JsonSchema = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-const PROPERTY_TYPES = ["SingleFamilyResidence", "Condominium", "Townhouse"] as const;
+const PROPERTY_TYPES = [
+  "SingleFamilyResidence",
+  "Condominium",
+  "Townhouse",
+] as const;
 
-const str = (description: string): JsonSchema => ({ type: "string", description });
-const int = (description: string, minimum = 0): JsonSchema => ({ type: "integer", minimum, description });
+const str = (description: string): JsonSchema => ({
+  type: "string",
+  description,
+});
+const int = (description: string, minimum = 0): JsonSchema => ({
+  type: "integer",
+  minimum,
+  description,
+});
 const propertyType: JsonSchema = {
   type: "string",
   enum: [...PROPERTY_TYPES],
-  description: "Property type, only if the user named one: SingleFamilyResidence (houses), Condominium (condos) or Townhouse (townhomes).",
+  description:
+    "Property type, only if the user named one: SingleFamilyResidence (houses), Condominium (condos) or Townhouse (townhomes).",
 };
 const propertyTypes: JsonSchema = {
   type: "array",
@@ -81,10 +101,11 @@ const propertyTypes: JsonSchema = {
   minItems: 1,
   uniqueItems: true,
   description:
-    "Property types the user asked for; include every one they named (e.g. condos AND townhomes → [\"Condominium\", \"Townhouse\"]). " +
+    'Property types the user asked for; include every one they named (e.g. condos AND townhomes → ["Condominium", "Townhouse"]). ' +
     "SingleFamilyResidence = houses. Omit if the user didn't specify a type.",
 };
-const ONLY_IF_STATED = " Only set this if the user stated it; never guess or fill in a default.";
+const ONLY_IF_STATED =
+  " Only set this if the user stated it; never guess or fill in a default.";
 
 /**
  * One isolated search session per OpenClaw conversation. OpenClaw's sessionId
@@ -96,38 +117,63 @@ export function sessionIdFor(ctx: ToolContext): string {
 }
 
 const GUIDANCE: Record<AgentResult["status"], string> = {
-  success: "Answer the user from this result. You may shorten or reformat it for chat, but do not add listings, prices or statistics that are not in it.",
-  needs_input: "The search needs more information. Ask the user this follow-up question, then call the same tool again with their answer.",
-  empty: "Nothing matched. Tell the user, and suggest loosening the criteria as described. Do not make up listings.",
+  success:
+    "Answer the user from this result. You may shorten or reformat it for chat, but do not add listings, prices or statistics that are not in it.",
+  needs_input:
+    "The search needs more information. Ask the user this follow-up question, then call the same tool again with their answer.",
+  empty:
+    "Nothing matched. Tell the user, and suggest loosening the criteria as described. Do not make up listings.",
   not_ready: "This feature is not set up yet. Tell the user what is missing.",
-  error: "The MLS database could not be queried (MySQL offline or misconfigured). Tell the user the data is temporarily unavailable. Do not answer from general knowledge.",
+  error:
+    "The MLS database could not be queried (MySQL offline or misconfigured). Tell the user the data is temporarily unavailable. Do not answer from general knowledge.",
 };
 
 /** What the model sees: status + how to use it + the agent's reply. */
 export function toToolResult(r: AgentResult): ToolResult {
   return {
-    content: [{ type: "text", text: `status: ${r.status}\n${GUIDANCE[r.status]}\n---\n${r.response}` }],
+    content: [
+      {
+        type: "text",
+        text: `status: ${r.status}\n${GUIDANCE[r.status]}\n---\n${r.response}`,
+      },
+    ],
     details: { status: r.status, intent: r.intent, data: r.data ?? null },
   };
 }
 
 function definedOnly<T extends object>(o: T): Partial<T> {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== "")) as Partial<T>;
+  return Object.fromEntries(
+    Object.entries(o).filter(
+      ([, v]) => v !== undefined && v !== null && v !== "",
+    ),
+  ) as Partial<T>;
 }
 
-async function safely(intent: AgentResult["intent"], run: () => Promise<AgentResult>): Promise<ToolResult> {
+async function safely(
+  intent: AgentResult["intent"],
+  run: () => Promise<AgentResult>,
+): Promise<ToolResult> {
   try {
     return toToolResult(await run());
   } catch (err) {
     console.error(`[idx-exchange] ${intent} failed:`, err);
-    return toToolResult({ status: "error", intent, response: "The MLS data source could not be reached." });
+    return toToolResult({
+      status: "error",
+      intent,
+      response: "The MLS data source could not be reached.",
+    });
   }
 }
 
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
-export const TOOL_NAMES = ["idx_property_search", "idx_market_stats", "idx_semantic_search"] as const;
+export const TOOL_NAMES = [
+  "idx_property_search",
+  "idx_market_stats",
+  "idx_semantic_search",
+  "idx_recommend",
+] as const;
 
 function propertySearchTool(ctx: ToolContext): AgentTool {
   return {
@@ -144,14 +190,30 @@ function propertySearchTool(ctx: ToolContext): AgentTool {
       required: ["query"],
       properties: {
         query: str("The user's request, copied in their own words."),
-        newSearch: { type: "boolean", description: "True to forget earlier search criteria in this conversation and start over." },
+        newSearch: {
+          type: "boolean",
+          description:
+            "True to forget earlier search criteria in this conversation and start over.",
+        },
         city: str("California city, e.g. 'Irvine'."),
-        maxPrice: int("The user's maximum price, converted to whole dollars (they say '$850K' → 850000)." + ONLY_IF_STATED),
+        maxPrice: int(
+          "The user's maximum price, converted to whole dollars (they say '$850K' → 850000)." +
+            ONLY_IF_STATED,
+        ),
         minBeds: int("Minimum bedrooms." + ONLY_IF_STATED),
-        minBaths: { type: "number", minimum: 0, description: "Minimum bathrooms (half baths allowed, e.g. 2.5)." + ONLY_IF_STATED },
+        minBaths: {
+          type: "number",
+          minimum: 0,
+          description:
+            "Minimum bathrooms (half baths allowed, e.g. 2.5)." +
+            ONLY_IF_STATED,
+        },
         minSqft: int("Minimum living area in square feet." + ONLY_IF_STATED),
         propertyTypes,
-        pool: { type: "boolean", description: "True if a private pool is required." },
+        pool: {
+          type: "boolean",
+          description: "True if a private pool is required.",
+        },
         view: { type: "boolean", description: "True if a view is required." },
       },
     },
@@ -165,7 +227,10 @@ function propertySearchTool(ctx: ToolContext): AgentTool {
           beds: p.minBeds,
           baths: p.minBaths,
           sqft: p.minSqft,
-          types: Array.isArray(p.propertyTypes) && p.propertyTypes.length ? p.propertyTypes : undefined,
+          types:
+            Array.isArray(p.propertyTypes) && p.propertyTypes.length
+              ? p.propertyTypes
+              : undefined,
           pool: p.pool ? "True" : undefined,
           hasView: p.view ? "True" : undefined,
         }) as Partial<PropertyFilters>;
@@ -192,9 +257,18 @@ function marketStatsTool(ctx: ToolContext): AgentTool {
       properties: {
         question: str("The user's question in their own words."),
         city: str("California city, e.g. 'Pasadena'."),
-        zip: { type: "string", pattern: "^9[0-6][0-9]{3}$", description: "California ZIP code, e.g. '92618'." },
+        zip: {
+          type: "string",
+          pattern: "^9[0-6][0-9]{3}$",
+          description: "California ZIP code, e.g. '92618'.",
+        },
         propertyType,
-        months: { type: "integer", minimum: 1, maximum: 48, description: "Length of the analysis window in months (default 12)." },
+        months: {
+          type: "integer",
+          minimum: 1,
+          maximum: 48,
+          description: "Length of the analysis window in months (default 12).",
+        },
       },
     },
     async execute(_id, p) {
@@ -205,7 +279,11 @@ function marketStatsTool(ctx: ToolContext): AgentTool {
           subType: p.propertyType,
           months: p.months,
         }) as Partial<MarketFilters>;
-        return marketStatsAgent(String(p.question ?? ""), sessionIdFor(ctx), hints);
+        return marketStatsAgent(
+          String(p.question ?? ""),
+          sessionIdFor(ctx),
+          hints,
+        );
       });
     },
   };
@@ -228,9 +306,16 @@ function semanticSearchTool(ctx: ToolContext): AgentTool {
       properties: {
         description: str("What the user is looking for, in their words."),
         city: str("California city to restrict to."),
-        maxPrice: int("The user's maximum price, converted to whole dollars." + ONLY_IF_STATED),
+        maxPrice: int(
+          "The user's maximum price, converted to whole dollars." +
+            ONLY_IF_STATED,
+        ),
         minBeds: int("Minimum bedrooms." + ONLY_IF_STATED),
-        minBaths: { type: "number", minimum: 0, description: "Minimum bathrooms." + ONLY_IF_STATED },
+        minBaths: {
+          type: "number",
+          minimum: 0,
+          description: "Minimum bathrooms." + ONLY_IF_STATED,
+        },
         minSqft: int("Minimum living area in square feet." + ONLY_IF_STATED),
         propertyTypes,
       },
@@ -243,22 +328,32 @@ function semanticSearchTool(ctx: ToolContext): AgentTool {
           beds: p.minBeds,
           baths: p.minBaths,
           sqft: p.minSqft,
-          types: Array.isArray(p.propertyTypes) && p.propertyTypes.length ? p.propertyTypes : undefined,
+          types:
+            Array.isArray(p.propertyTypes) && p.propertyTypes.length
+              ? p.propertyTypes
+              : undefined,
         }) as Partial<HardFilters>;
-        return semanticSearchAgent(String(p.description ?? ""), sessionIdFor(ctx), hints);
+        return semanticSearchAgent(
+          String(p.description ?? ""),
+          sessionIdFor(ctx),
+          hints,
+        );
       });
     },
   };
 }
 
-const expandHome = (p: string) => (p.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
+const expandHome = (p: string) =>
+  p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
 
 /**
  * OpenClaw runs a copy of this plugin from ~/.openclaw/tmp, so the .env can't
  * be found relative to the running file. Find the repo's .env from the
  * plugin's real install location instead (or an explicit envFile setting).
  */
-export function loadProjectEnv(api: Pick<PluginApi, "source" | "rootDir" | "pluginConfig">): string | null {
+export function loadProjectEnv(
+  api: Pick<PluginApi, "source" | "rootDir" | "pluginConfig">,
+): string | null {
   const explicit = api.pluginConfig?.envFile;
   const candidates = [
     typeof explicit === "string" && explicit ? expandHome(explicit) : null,
@@ -268,7 +363,9 @@ export function loadProjectEnv(api: Pick<PluginApi, "source" | "rootDir" | "plug
   const used = candidates.find((p) => loadEnvFile(p)) ?? null;
   if (used) {
     const db = config.mysql;
-    console.log(`[idx-exchange] settings from ${used} (MySQL ${db.user}@${db.host}:${db.port}/${db.database})`);
+    console.log(
+      `[idx-exchange] settings from ${used} (MySQL ${db.user}@${db.host}:${db.port}/${db.database})`,
+    );
   } else {
     console.warn(
       `[idx-exchange] no .env found (tried ${candidates.join(", ") || "nothing"}; current: ${envFilePath() ?? "none"}). ` +
@@ -278,22 +375,83 @@ export function loadProjectEnv(api: Pick<PluginApi, "source" | "rootDir" | "plug
   return used;
 }
 
+function recommendTool(ctx: ToolContext): AgentTool {
+  return {
+    name: "idx_recommend",
+    label: "Similar listings",
+    catalogMode: "direct-only",
+    description:
+      "Find 5 active California listings similar to one the user liked (hybrid score: price, bedrooms, city, size + description similarity), " +
+      "each with a price check against recent comparable sales. Use when the user says things like 'more like #2', " +
+      "'show me homes similar to 59 Fox Hollow', 'anything comparable to the first one?'. " +
+      "It works on the listings shown earlier in this conversation; identify the listing with resultNumber or address.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["request"],
+      properties: {
+        request: str("The user's request, copied in their own words."),
+        resultNumber: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10,
+          description:
+            "Position of the listing in the most recent list shown to the user (1 = first).",
+        },
+        address: str(
+          "Street address of the listing the user means, e.g. as shown in an earlier result.",
+        ),
+        listingId: str(
+          "MLS listing id (L_ListingID), only if known from a previous result.",
+        ),
+      },
+    },
+    async execute(_id, p) {
+      return safely("recommendation", async () =>
+        recommendationAgent(
+          String(p.request ?? ""),
+          sessionIdFor(ctx),
+          definedOnly({
+            resultNumber: p.resultNumber,
+            address: p.address,
+            listingId: p.listingId,
+          }),
+        ),
+      );
+    },
+  };
+}
+
 const plugin = {
   id: "idx-exchange",
   name: "IDX Exchange Real Estate",
-  description: "California MLS property search, market statistics and semantic search over the IDX Exchange datasets.",
+  description:
+    "California MLS property search, market statistics and semantic search over the IDX Exchange datasets.",
   configSchema: {
     type: "object",
     additionalProperties: false,
     properties: {
-      envFile: { type: "string", description: "Path to the IDX-Exchange .env (defaults to the repo's .env next to the plugin)." },
+      envFile: {
+        type: "string",
+        description:
+          "Path to the IDX-Exchange .env (defaults to the repo's .env next to the plugin).",
+      },
     },
   },
   register(api: PluginApi) {
     loadProjectEnv(api);
-    api.registerTool((ctx) => propertySearchTool(ctx), { name: "idx_property_search" });
-    api.registerTool((ctx) => marketStatsTool(ctx), { name: "idx_market_stats" });
-    api.registerTool((ctx) => semanticSearchTool(ctx), { name: "idx_semantic_search" });
+    api.registerTool((ctx) => propertySearchTool(ctx), {
+      name: "idx_property_search",
+    });
+    api.registerTool((ctx) => marketStatsTool(ctx), {
+      name: "idx_market_stats",
+    });
+    api.registerTool((ctx) => semanticSearchTool(ctx), {
+      name: "idx_semantic_search",
+    });
+    api.registerTool((ctx) => recommendTool(ctx), {
+      name: "idx_recommend",
+    });
   },
 };
 

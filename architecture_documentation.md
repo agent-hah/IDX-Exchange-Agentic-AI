@@ -73,7 +73,7 @@ The system connects to a local MySQL schema.
 * **`rets_property`:** The active listing database containing 130+ fields, used for live search and discovery. It features a `FULLTEXT` index on listing remarks to support semantic vector search.
 * **`california_sold`:** The historical comps table containing 46 fields, utilized for market analytics, trend validation, and price modeling.
 
-See [Section 10](#10-data-notes) for what the local copy of the data actually contains. Week 6 adds a third table, `listing_embeddings` ([Section 7](#7-week-6-embeddings--semantic-search)).
+See [Section 11](#11-data-notes) for what the local copy of the data actually contains. Week 6 adds a third table, `listing_embeddings` ([Section 7](#7-week-6-embeddings--semantic-search)).
 
 ---
 
@@ -83,7 +83,7 @@ At a high level, OpenClaw takes the user's request from a conversation channel t
 
 ---
 
-## 5. Current Implementation (Weeks 2–6)
+## 5. Current Implementation (Weeks 2–7)
 
 Sections 1–4 describe the target design. This section describes what is built today.
 
@@ -94,10 +94,14 @@ message text + userId
       │
       ▼
 src/index.ts  route(text, userId)
-      │  keyword router for tests/scripts; in OpenClaw the model chooses (Section 8)
+      │  keyword router for tests/scripts; in OpenClaw the model chooses (Section 9)
       │
       ├── isMarketQuestion(text)? ──yes──► marketStatsAgent()     (Week 5)
       │                                        └── california_sold, rets_property (inventory)
+      │
+      ├── isRecommendationQuery(text)? ─yes─► recommendationAgent()  (Week 7)
+      │                                        └── session lastResults, rets_property,
+      │                                            listing_embeddings, california_sold (comps)
       │
       ├── isSemanticQuery(text)?  ──yes──► semanticSearchAgent()  (Week 6)
       │                                        └── Gemini (query embedding), listing_embeddings, rets_property
@@ -108,14 +112,14 @@ src/index.ts  route(text, userId)
 AgentResult { status, intent, response, data? }
 ```
 
-In production, messages don't go through `route()`: OpenClaw's model picks the agent by calling one of the plugin's tools (see [Section 8](#8-openclaw-integration)). `route()` remains for tests and local scripts.
+In production, messages don't go through `route()`: OpenClaw's model picks the agent by calling one of the plugin's tools (see [Section 9](#9-openclaw-integration)). `route()` remains for tests and local scripts.
 
 Every agent lives in its own folder under `src/agents/` and follows the same three layers: **parse** free text into a typed filter object (`parser.ts`), **query** MySQL with parameterized SQL (`queries.ts`), then **format** the result for WhatsApp (`agent.ts`). Every agent returns the same `AgentResult` type (`src/types.ts`):
 
 | Field | Meaning |
 |---|---|
 | `status` | `success`, `needs_input` (asked a follow-up), `empty` (nothing matched), `not_ready` (e.g. no embeddings yet), `error` |
-| `intent` | `property_search`, `market_stats`, `semantic_search` |
+| `intent` | `property_search`, `market_stats`, `semantic_search`, `recommendation` |
 | `response` | ready-to-send WhatsApp text |
 | `data` | structured payload, so other agents and the orchestrator can reuse results without re-querying |
 
@@ -145,9 +149,13 @@ Shared code lives outside the agent folders: `db/` (connection pool, and `listin
 | `src/embeddings/listingText.ts` | 6 | `buildListingText()`; `textHash()` for change detection |
 | `src/embeddings/store.ts` | 6 | `listing_embeddings` table, upserts, in-memory `VectorIndex` |
 | `src/embeddings/vectorMath.ts` | 6 | normalize, dot product, float32 ⇄ BLOB, top-k |
+| `src/agents/recommendation/intent.ts` | 7 | `isRecommendationQuery()`, `referencedPosition()`, `resolveListingReference()`, `ADDRESS` |
+| `src/agents/recommendation/scoring.ts` | 7 | `similarityScore()`, `priceScore()`, `sqftScore()`: the hybrid 60 + 40 score |
+| `src/agents/recommendation/queries.ts` | 7 | `getListing()`, `findListingByAddress()`, `getCandidates()`, `validateWithComps()` |
+| `src/agents/recommendation/agent.ts` | 7 | `recommendationAgent()`, `compVerdict()`, `formatRecommendations()` |
 | `src/scripts/buildListingEmbeddings.ts` | 6 | Resumable indexer (`npm run embed:listings`) |
 | `src/scripts/exportMarketReports.ts` | 5→8 | Per-city Markdown summaries for RAG indexing |
-| `openclaw-plugin/index.ts` | — | OpenClaw tool plugin: three tools wrapping the agents |
+| `openclaw-plugin/index.ts` | — | OpenClaw tool plugin: four tools wrapping the agents |
 | `openclaw-plugin/openclaw.plugin.json` | — | Plugin manifest: tool contracts, bundled skill |
 | `openclaw-plugin/skills/idx-real-estate/SKILL.md` | — | Instructions for OpenClaw's agent: which tool, how to answer |
 | `test/unit/*.test.ts` | — | `npm test`: no database or API key |
@@ -155,7 +163,7 @@ Shared code lives outside the agent folders: `db/` (connection pool, and `listin
 
 ### Sessions
 
-`session.ts` holds one `UserSession` per `userId` in a `Map`. It stores the accumulated property filters, `lastResults` (the last listings shown, written by property search and semantic search), and `conversationStep`. State lives in memory, so it resets when the process restarts. The Week 5 market agent reads the session's `city` to answer follow-ups like *"how's the market there?"*, but never writes to the session. The Week 6 semantic agent reads `city` too, and writes `lastResults` (and `city`, when the query names one) so the Week 7 recommendation engine can find listings similar to one the user just saw.
+`session.ts` holds one `UserSession` per `userId` in a `Map`. It stores the accumulated property filters, `lastResults` (the last listings shown, written by property search and semantic search), and `conversationStep`. State lives in memory, so it resets when the process restarts. The Week 5 market agent reads the session's `city` to answer follow-ups like *"how's the market there?"*, but never writes to the session. The Week 6 semantic agent reads `city` too, and writes `lastResults` (and `city`, when the query names one) so the Week 7 recommendation engine can find listings similar to one the user just saw. The Week 7 agent reads `lastResults` to resolve "#2", then replaces it with its own recommendations so references chain.
 
 ---
 
@@ -345,7 +353,76 @@ Phrases like "similar to" or "vibe", and a `semantic:` prefix, force semantic se
 
 ---
 
-## 8. OpenClaw Integration
+## 8. Week 7: Recommendation Engine
+
+### Goal
+
+Handbook Week 7: given a listing the user is interested in, recommend similar active listings using a hybrid score (structured attributes plus description similarity), and check each against recent sold comps. Typical messages: *"more like #2"*, *"similar to the second one"*, *"homes like 59 Fox Hollow"*.
+
+### Pipeline
+
+```text
+"more like #2"
+   │  intent.ts      which listing? resultNumber hint → address in the last results → "#2"/"second"/"last"
+   │                 → "this/that/it" when one listing was shown → address lookup in rets_property
+   ▼
+target listing
+   │  queries.ts     getCandidates(): active, within ±$300K, closest price first (≤ 300)
+   │                 same city first; widen to all cities if fewer than 5
+   ▼
+candidates
+   │  agent.ts       Week 6 vector index: if the target is embedded, prefer embedded candidates
+   │  scoring.ts     similarityScore(target, candidate, cosine) → total 0–100
+   ▼
+top 5
+   │  queries.ts     validateWithComps(): same-city residential sales, ±20% sqft, last 6 months of data
+   ▼
+WhatsApp reply + session.lastResults = the 5 recommendations
+```
+
+### Score
+
+| Part | Points | Rule |
+|---|---|---|
+| Price | 20 | difference under $50K → 20, under $150K → 12, under $300K → 5 |
+| Bedrooms | 15 | same count |
+| City | 15 | same city |
+| Size | 10 | difference under 300 sqft → 10, under 700 sqft → 5; unknown size → 0 |
+| Description | 40 | cosine similarity of the two listings' Week 6 embeddings × 40 |
+
+The structured part (max 60) catches what a buyer filters on; the semantic part (max 40) catches style and features ("craftsman", "updated kitchen") that columns don't. When the target isn't embedded yet, the semantic part is skipped and the reply says so, so scores top out at 60. When it is embedded, candidates that aren't embedded are dropped (if at least 5 embedded ones remain), so they aren't ranked out of 100 on only 60 points.
+
+### Comp validation
+
+For each recommendation: average close price per sqft of residential sales in the same city with living area within ±20% of the listing's, over the 6 months ending on the data's latest close date (the same anchor as Week 5, since the dataset ends Sep 2026). Comp price = that $/sqft × the listing's sqft. The reply says "X% below comps", "in line with comps" (within ±5%) or "X% above comps", or "too few comparable sales" when there are fewer than 3. Rows under 200 sqft are left out of the $/sqft average to avoid data-entry outliers.
+
+### Design decisions
+
+- **Reuse, don't duplicate.** The agent uses the Week 6 vector index and cosine, the Week 5 anchor date, and the session `lastResults` that property search and semantic search already write.
+- **Pure parts are testable.** `intent.ts` and `scoring.ts` have no database access, so the unit tests cover reference resolution and every scoring band.
+- **The model can point at a listing.** `idx_recommend` takes `resultNumber`, `address` or `listingId`, so the model doesn't have to phrase the reference in a way the regexes understand.
+- **Parameterized SQL.** Every value goes in as a `?` placeholder; mysql2 sends values separately from the SQL text, so user input can never change the query.
+
+### Proof (WhatsApp)
+
+After `/new`: *"3-bedroom homes in Irvine under $1.5M"*, then *"more like #2"* returned five similar Irvine listings, each with a match score and comp verdict. (Screenshot taken before the reply prefix was turned off; see [Section 9](#9-openclaw-integration).)
+
+<img src="docs/images/week7-whatsapp-recommendations.png" alt="WhatsApp: Irvine search, then 'more like #2' with five scored, comp-checked recommendations" width="420">
+
+Scores here range 45–60 because the Irvine listings weren't embedded yet: only the structured 60 points applied.
+
+### Testing
+
+- `npm test` (`test/unit/recommendation.test.ts`): price and size bands; a near-identical listing scores 60 + 40 × similarity; no embedding → semantic 0; detection ("more like #2" yes, a description with "similar to" goes to semantic search); positions (#2, number 3, first, last); reference resolution by position, address, hint and "this one"; comp verdict wording.
+- `npm run test:db` (`test/integration/recommendation.test.ts`), against MySQL:
+  - search, then "more like #2": picks the 2nd listing shown and returns 5 recommendations, sorted by score, within $300K, never the listing itself
+  - the comp check is internally consistent (comp price, delta)
+  - no listing to compare → `needs_input`
+  - the router sends "more like #2" to the recommendation agent
+
+---
+
+## 9. OpenClaw Integration
 
 ### How a WhatsApp message reaches the agents
 
@@ -357,7 +434,7 @@ WhatsApp ──► OpenClaw Gateway (channel + session) ──► OpenClaw agent
                               openclaw-plugin/index.ts  tool.execute(params)
                                                          │ sessionKey → per-conversation session
                                                          ▼
-                              propertySearchAgent / marketStatsAgent / semanticSearchAgent
+                              propertySearchAgent / marketStatsAgent / semanticSearchAgent / recommendationAgent
                                                          │ MySQL (+ Gemini for semantic search)
                                                          ▼
                               "status: … / guidance / --- / reply"  ──► LLM writes the answer ──► WhatsApp
@@ -381,6 +458,7 @@ Before this plugin existed, OpenClaw answered real estate questions from its own
 | `idx_property_search` | `propertySearchAgent` | `query` | `newSearch`, `city`, `maxPrice`, `minBeds`, `minBaths`, `minSqft`, `propertyTypes` (one or more), `pool`, `view` |
 | `idx_market_stats` | `marketStatsAgent` | `question` | `city`, `zip`, `propertyType`, `months` |
 | `idx_semantic_search` | `semanticSearchAgent` | `description` | `city`, `maxPrice`, `minBeds`, `minBaths`, `minSqft`, `propertyTypes` (one or more) |
+| `idx_recommend` | `recommendationAgent` | `request` | `resultNumber` (position in the last list shown), `address`, `listingId` |
 
 - **The model's understanding beats the regexes.** The model always passes the user's own words, and fills in the structured fields it understood. Agents take these as `hints`: non-null hints override what the regex parsers extracted. A request like "pasadena houses, 4 bedrooms, max 1.6m" therefore works even though the Week 2 parser only finds cities after the word "in". With no hints, behavior is unchanged; all 20 baseline replies were re-verified as identical.
 - **Several property types.** "Condos and townhomes" is passed as `propertyTypes: ["Condominium", "Townhouse"]` and becomes `L_Type_ IN (…)` in `activeListingWhere()`. The Week 2 parser also detects several types in plain text. A later single choice ("just townhomes") replaces the earlier set. Property cards now show each listing's type (House / Condo / Townhome), so results can be checked at a glance.
@@ -389,14 +467,17 @@ Before this plugin existed, OpenClaw answered real estate questions from its own
 - **What the model sees.** Each result is `status: <status>`, then one line of guidance for that status, then the agent's reply. The guidance tells the model to answer only from the result, to ask the follow-up on `needs_input`, and not to fall back to general knowledge on `error` (e.g. MySQL offline). The structured `data` goes in the result's `details`, not the model's text.
 - **Errors.** Every tool call is wrapped: an exception becomes a `status: error` result instead of a failed tool call.
 - **WhatsApp sessions (OpenClaw config).** With OpenClaw's default `session.dmScope: "main"`, every WhatsApp DM shares the agent's main session, along with CLI runs that don't pass `--session-key`. In testing, that session had built up an earlier "Irvine condos under $1.5M" conversation. It couldn't be archived, and neither `/new` from WhatsApp nor `/reset` from the CLI reset it, so the model kept passing `maxPrice: 1500000` on new questions. OpenClaw's audit log (`audit_events` in `~/.openclaw/state/openclaw.sqlite`) showed every WhatsApp tool call running under the same session id. Setting `session.dmScope: "per-channel-peer"` gives each WhatsApp chat its own session and fixed it. (A tool definition that used $1.5M as its example price was also removed, since small models copy examples.)
-- **Always visible (`catalogMode: "direct-only"`).** With OpenClaw's Code Mode on (as in this setup), plugin tools normally sit in a searchable catalog, and the model only sees a few generic tools (`exec`, `openclaw`, …). In the first live test, `gemini-3.5-flash-lite` never searched that catalog and answered "is now a good time to buy in San Diego?" from general knowledge: the run showed `codeModeEngaged: true` and no tool calls. Marking the three tools direct-only keeps them in the model's tool list on every turn.
+- **Commands need the allowlist (OpenClaw config).** In a WhatsApp self-chat (messaging your own number), plain messages reach the agent even when your number isn't in `channels.whatsapp.allowFrom`, but chat commands don't: OpenClaw only accepts commands from authorized senders. In testing, `/new` was silently passed to the model as ordinary text, so the conversation never reset. Adding the user's own number to `channels.whatsapp.allowFrom` fixed it.
+- **Reply prefix (OpenClaw config).** Once your number is in `allowFrom`, OpenClaw turns on its self-chat safeguards, which prefix every reply with the agent's identity name (here `[Chief of Staff]`) when no `channels.whatsapp.responsePrefix` is set. Setting it to `""` removes the prefix.
+- **Reloading after adding a tool.** A new tool changes the plugin's declared capabilities, so `openclaw plugins reload idx-exchange` is refused until it's re-run with `--accept-capabilities`.
+- **Always visible (`catalogMode: "direct-only"`).** With OpenClaw's Code Mode on (as in this setup), plugin tools normally sit in a searchable catalog, and the model only sees a few generic tools (`exec`, `openclaw`, …). In the first live test, `gemini-3.5-flash-lite` never searched that catalog and answered "is now a good time to buy in San Diego?" from general knowledge: the run showed `codeModeEngaged: true` and no tool calls. Marking the tools direct-only keeps them in the model's tool list on every turn.
 
 ### The skill
 
 `skills/idx-real-estate/SKILL.md` covers:
 - **Scope:** use the tools for any California listing or market question; never answer those from general knowledge or web search.
-- **Which tool:** property search for criteria, semantic search for style and features, market stats for market conditions; mixed questions call two tools.
-- **Calling:** pass the user's words plus the structured fields, follow up on `needs_input`, and use `newSearch` when the user starts over.
+- **Which tool:** property search for criteria, semantic search for style and features, market stats for market conditions, recommendations for "more like this one"; mixed questions call two tools.
+- **Calling:** pass the user's words plus the structured fields, follow up on `needs_input`, use `newSearch` when the user starts over, and give `idx_recommend` a `resultNumber` or `address`.
 - **Answering:** keep the numbers exactly as returned, add nothing, and note that market numbers describe the dataset's date range.
 
 ### Testing
@@ -418,7 +499,7 @@ Before this plugin existed, OpenClaw answered real estate questions from its own
 
 ---
 
-## 9. Runtime and Tooling
+## 10. Runtime and Tooling
 
 - TypeScript runs directly on Node (24.22.1+, which the OpenClaw submodule requires) using built-in type stripping; there is no build step.
 - Because of that, type-only imports must use `import type` / `import { type X }`, and relative imports include the `.ts` extension.
@@ -429,7 +510,7 @@ Before this plugin existed, OpenClaw answered real estate questions from its own
 
 ---
 
-## 10. Data Notes
+## 11. Data Notes
 
 Profiling the local `california_sold` import (October 2026):
 

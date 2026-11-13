@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/unit/*.test.ts",
-    "test:db": "node --test --test-concurrency=1 test/integration/propertySearch.test.ts test/integration/marketStats.test.ts",
+    "test:db": "node --test --test-concurrency=1 test/integration/propertySearch.test.ts test/integration/marketStats.test.ts test/integration/recommendation.test.ts",
     "test:semantic": "node --test test/integration/semanticSearch.test.ts",
     "typecheck": "tsc --noEmit",
     "embed:listings": "node src/scripts/buildListingEmbeddings.ts",

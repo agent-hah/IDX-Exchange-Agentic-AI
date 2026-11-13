@@ -2,7 +2,7 @@
 
 AI Agentic Engineer internship project for IDX Exchange (Summer 2026).
 
-An OpenClaw-based multi-agent assistant that answers real estate questions over real California MLS data: natural-language property search, multi-turn conversations, market analytics and semantic search today, with recommendations, RAG, WhatsApp and email workflows to come.
+An OpenClaw-based multi-agent assistant that answers real estate questions over real California MLS data: natural-language property search, multi-turn conversations, market analytics, semantic search and "more like this" recommendations today, with RAG, orchestration and email workflows to come.
 
 ## Status
 
@@ -16,7 +16,8 @@ An OpenClaw-based multi-agent assistant that answers real estate questions over 
 | 5 | Market statistics agent | Done |
 | 6 | Embeddings & semantic search | Done |
 | — | OpenClaw integration (tool plugin) | Done: the agents answer over WhatsApp |
-| 7–12 | Recommendations, RAG, orchestration, WhatsApp, email, capstone | Upcoming |
+| 7 | Recommendation engine | Done ([proof](#week-7-on-whatsapp)) |
+| 8–12 | RAG, orchestration, WhatsApp, email, capstone | Upcoming |
 
 See [architecture_documentation.md](architecture_documentation.md) for how the pieces fit together and a file-by-file code map.
 
@@ -118,7 +119,7 @@ The agents reach OpenClaw through a tool plugin in `openclaw-plugin/`. Install i
 
 ```bash
 openclaw plugins install --link ./openclaw-plugin
-openclaw plugins inspect idx-exchange --runtime     # should list idx_property_search, idx_market_stats, idx_semantic_search
+openclaw plugins inspect idx-exchange --runtime     # should list idx_property_search, idx_market_stats, idx_semantic_search, idx_recommend
 openclaw skills list | grep idx-real-estate          # the bundled skill that tells the agent to use these tools
 ```
 
@@ -133,6 +134,22 @@ openclaw gateway restart
 
 With the default (`main`), every DM shares the agent's single main session, along with CLI runs that don't pass `--session-key`. That session can't be archived, and a long history in it leaks old criteria into new questions. `per-channel-peer` keeps WhatsApp separate; undo it with `openclaw config set session.dmScope main`.
 
+Add your own number to the WhatsApp allowlist, so chat commands like `/new` work when you message yourself:
+
+```bash
+openclaw config get channels.whatsapp.allowFrom --json    # see who is allowed now
+openclaw config set channels.whatsapp.allowFrom '["+15551234567"]' --strict-json   # your number, E.164 format; keep any numbers already listed
+```
+
+Self-chat messages reach the agent even without this, but **commands** are only accepted from senders in `allowFrom`. Without your number there, `/new` is silently treated as an ordinary message and the conversation (and its old filters) carries on.
+
+Turn off the reply prefix (optional). With your number in `allowFrom`, OpenClaw's self-chat safeguards switch on and start every reply with the agent's identity name (e.g. `[Chief of Staff]`) unless a response prefix is configured. An empty prefix turns it off:
+
+```bash
+openclaw config set channels.whatsapp.responsePrefix '""' --strict-json
+openclaw gateway restart
+```
+
 Check it end to end:
 
 ```bash
@@ -141,7 +158,7 @@ openclaw agent --message "Is now a good time to buy in San Diego?"
 
 The answer should quote numbers from your data (e.g. the closed-sales count and the Mar–Sep 2026 date range), not general knowledge. **MySQL must be running** (external drive attached) whenever OpenClaw answers real estate questions; if it isn't, the agent says the data is unavailable instead of guessing.
 
-After editing agent code, reload the plugin with `openclaw plugins reload idx-exchange`.
+After editing agent code, reload the plugin with `openclaw plugins reload idx-exchange`. If you added or renamed a tool, OpenClaw asks you to approve the change: `openclaw plugins reload idx-exchange --accept-capabilities`.
 
 ### 7. Build the listing embeddings (Week 6)
 
@@ -159,12 +176,18 @@ On the Gemini free tier, the full ~55K listings takes many hours because of the 
 
 ```bash
 npm test                # unit tests: parsers, routing, vector math, formatting (no database or API key)
-npm run test:db         # Weeks 2–5 against MySQL
+npm run test:db         # Weeks 2–5 and 7 against MySQL
 npm run test:semantic   # Week 6 against MySQL + Gemini (needs some embedded listings)
 npm run typecheck
 ```
 
-Then send a test message to the agent over WhatsApp, e.g. *"Find homes in Irvine"*, *"Is now a good time to buy in San Diego?"* or *"charming craftsman with mountain views and character"*
+Then send a test message to the agent over WhatsApp, e.g. *"Find homes in Irvine"*, *"Is now a good time to buy in San Diego?"* or *"charming craftsman with mountain views and character"*. For Week 7, send `/new`, search (*"3-bedroom homes in Irvine under $1.5M"*), then reply *"more like #2"*.
+
+#### Week 7 on WhatsApp
+
+A fresh chat (`/new`), a search, then *"more like #2"*: five similar active listings, each with a match score and a sold-comps check. (Taken before the `[Chief of Staff]` reply prefix was turned off.)
+
+<img src="docs/images/week7-whatsapp-recommendations.png" alt="WhatsApp: a search for 3-bedroom homes in Irvine under $1.5M, then 'more like #2' returns five similar listings with match scores and comp checks" width="420">
 
 ---
 
@@ -208,6 +231,13 @@ Questions without a location get a statewide leaderboard of the busiest cities. 
 - **Hybrid filters:** limits the Week 2 parser finds (city, max price, beds, baths, sqft, type) narrow the candidates first.
 - **Session:** results are saved to `lastResults` for the Week 7 recommendation engine.
 
+**Week 7: Recommendation engine.** `recommendationAgent` answers *"more like #2"* or *"similar to 59 Fox Hollow"*.
+- **Which listing:** `#2`, "the second one" or "the last one" refer to the last list shown (search, semantic search, or earlier recommendations); an address works too.
+- **Candidates:** active listings within $300K of its price, same city first, widening to other cities if there are fewer than 5.
+- **Score (0–100):** structured match up to 60 (price 20, same bedrooms 15, same city 15, size 10) plus description similarity up to 40, from the Week 6 embeddings. A listing that isn't embedded yet is scored on the 60 structured points only.
+- **Comps check:** each of the top 5 is compared with residential sales in the same city within ±20% of its size over the data's last 6 months: comp price = average $/sqft × its sqft, then "below / in line with / above comps".
+- **Session:** the recommendations become the new `lastResults`, so *"more like #3"* chains.
+
 ---
 
 ## Repository structure
@@ -230,6 +260,11 @@ src/
       intent.ts             detects descriptive (semantic) queries
       search.ts             hybrid filter + vector ranking (reused by Week 7)
       agent.ts              WhatsApp cards + session results
+    recommendation/       Week 7
+      intent.ts             "more like #2" detection, which listing is meant
+      scoring.ts            hybrid similarity score (structured 60 + semantic 40)
+      queries.ts            target lookup, candidates, sold-comps check
+      agent.ts              ranking, comp verdicts, WhatsApp formatting
   db/
     connection.ts         MySQL connection pool + query() helper
     listingFilters.ts     The one place filters become SQL over rets_property
@@ -247,10 +282,11 @@ test/
   unit/                   No database or API key needed (npm test)
   integration/            Need MySQL, and Gemini for semantic search (npm run test:db / test:semantic)
 openclaw-plugin/          OpenClaw tool plugin: exposes the agents as tools
-  index.ts                register(api): idx_property_search, idx_market_stats, idx_semantic_search
+  index.ts                register(api): idx_property_search, idx_market_stats, idx_semantic_search, idx_recommend
   openclaw.plugin.json    manifest (tool contracts, bundled skills)
   skills/idx-real-estate/ SKILL.md telling OpenClaw's agent when to use the tools
 openclaw/                 OpenClaw framework (git submodule)
+docs/images/              Screenshots used in the docs
 architecture_documentation.md
 ```
 
@@ -278,6 +314,11 @@ The handbook describes `california_sold` as covering 2021–2025. The copy used 
 - **`npx ts-node` crashes with `Cannot read properties of undefined (reading 'fileExists')`**: ts-node does not support TypeScript 7. Run files with `node` instead (see Commands).
 - **WhatsApp answers sound generic and don't match your data**: OpenClaw isn't calling the tools. Check `openclaw plugins inspect idx-exchange --runtime`, reload with `openclaw plugins reload idx-exchange`, then send `/new` to start a fresh session. To see which tools a run used: `openclaw agent --agent coordinator --json --message "…"` and look at `successfulToolNames`.
 - **`openclaw: command not found`**: if you run OpenClaw from the submodule, use `pnpm openclaw …` inside `openclaw/`, or add `alias openclaw="pnpm --silent --dir <repo>/openclaw openclaw"` to your shell config. Commands that take an agent need `--agent coordinator` when several agents are configured.
+- **`/new` (or another command) in your WhatsApp self-chat is ignored, and the agent just keeps the conversation going**: your number isn't in `channels.whatsapp.allowFrom`, so OpenClaw doesn't accept commands from you. Add it (setup step 6) and restart the gateway.
+- **Replies start with `[Chief of Staff]` (or another agent name)**: that's the self-chat identity prefix. Set `channels.whatsapp.responsePrefix` to `""` (setup step 6) and restart the gateway.
+- **`openclaw plugins reload` is refused after adding a tool**: the plugin's capabilities changed; re-run with `--accept-capabilities`.
+- **"more like #2" asks which listing you mean**: the chat has no recent results (e.g. after `/new` or a plugin reload, since sessions live in memory). Search again first, or give the address.
+- **Week 7 match scores never go above ~60**: the listings aren't embedded yet, so only the 60 structured points count. Embed that city with `npm run embed:listings -- --city <City>`.
 - **WhatsApp keeps reusing an old budget or old results, even after `/new`**: the chat is in the agent's shared main session, which still holds the earlier conversation. Set `session.dmScope` to `per-channel-peer` (see setup step 6) and restart the gateway. To confirm, check that WhatsApp's `idx_*` calls run under a new session id, not `agent:<agent>:main`.
 - **The agent says the MLS data is unavailable**: the plugin couldn't query MySQL. Find the reason with `openclaw logs --limit 3000 --plain | grep -A2 -E "Skill Error|\[idx-exchange\]"`:
   - `ECONNREFUSED`: MySQL isn't running (external drive unplugged, or the MySQL container stopped).

@@ -4,7 +4,8 @@
  * agent answered.
  */
 
-export type AgentIntent = "property_search" | "market_stats" | "semantic_search";
+export type AgentIntent =
+  "property_search" | "market_stats" | "semantic_search" | "recommendation";
 
 export type AgentStatus =
   | "success" // answered with data

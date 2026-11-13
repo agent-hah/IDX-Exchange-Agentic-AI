@@ -9,7 +9,8 @@
     "tools": [
       "idx_property_search",
       "idx_market_stats",
-      "idx_semantic_search"
+      "idx_semantic_search",
+      "idx_recommend"
     ]
   },
   "activation": {

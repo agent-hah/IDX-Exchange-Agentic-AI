@@ -3,14 +3,20 @@ import { isMarketQuestion } from "./agents/marketStats/parser.ts";
 import { propertySearchAgent } from "./agents/propertySearch/agent.ts";
 import { semanticSearchAgent } from "./agents/semanticSearch/agent.ts";
 import { isSemanticQuery } from "./agents/semanticSearch/intent.ts";
+import { recommendationAgent } from "./agents/recommendation/agent.ts";
+import { isRecommendationQuery } from "./agents/recommendation/intent.ts";
 import type { AgentResult } from "./types.ts";
 
 /**
  * Temporary keyword router. Step 2 (the OpenClaw tool plugin) replaces this:
  * OpenClaw's LLM will choose the agent instead of these heuristics.
  */
-export async function route(text: string, userId: string): Promise<AgentResult> {
+export async function route(
+  text: string,
+  userId: string,
+): Promise<AgentResult> {
   if (isMarketQuestion(text)) return marketStatsAgent(text, userId); // Week 5
+  if (isRecommendationQuery(text)) return recommendationAgent(text, userId); // Week 7
   if (isSemanticQuery(text)) return semanticSearchAgent(text, userId); // Week 6
   return propertySearchAgent(text, userId); // Weeks 2–4
 }
