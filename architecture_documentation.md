@@ -73,7 +73,7 @@ The system connects to a local MySQL schema.
 * **`rets_property`:** The active listing database containing 130+ fields, used for live search and discovery. It features a `FULLTEXT` index on listing remarks to support semantic vector search.
 * **`california_sold`:** The historical comps table containing 46 fields, utilized for market analytics, trend validation, and price modeling.
 
-See [Section 9](#9-data-notes) for what the local copy of the data actually contains. Week 6 adds a third table, `listing_embeddings` ([Section 7](#7-week-6-embeddings--semantic-search)).
+See [Section 10](#10-data-notes) for what the local copy of the data actually contains. Week 6 adds a third table, `listing_embeddings` ([Section 7](#7-week-6-embeddings--semantic-search)).
 
 ---
 
@@ -90,11 +90,11 @@ Sections 1–4 describe the target design. This section describes what is built 
 ### Request flow
 
 ```text
-WhatsApp / OpenClaw Gateway
-      │  payload { message | text, userId | from }
+message text + userId
+      │
       ▼
-src/index.ts  handleOpenClawPayload()          ← entry point named in openclaw.json
-      │  temporary router until the Week 9 orchestrator
+src/index.ts  route(text, userId)
+      │  keyword router for tests/scripts; in OpenClaw the model chooses (Section 8)
       │
       ├── isMarketQuestion(text)? ──yes──► marketStatsAgent()     (Week 5)
       │                                        └── california_sold, rets_property (inventory)
@@ -102,40 +102,60 @@ src/index.ts  handleOpenClawPayload()          ← entry point named in openclaw
       ├── isSemanticQuery(text)?  ──yes──► semanticSearchAgent()  (Week 6)
       │                                        └── Gemini (query embedding), listing_embeddings, rets_property
       │
-      └── otherwise ─────────────────────► handleMessage()        (Weeks 2–4)
+      └── otherwise ─────────────────────► propertySearchAgent()  (Weeks 2–4)
                                                └── rets_property
       ▼
-{ status, intent, response, data? }  →  response text sent back to the user
+AgentResult { status, intent, response, data? }
 ```
 
-Every agent follows the same three layers: **parse** free text into a typed filter object, **query** MySQL with parameterized SQL, then **format** the result for WhatsApp. Agents return structured `data` alongside the `response` text, so the Week 9 orchestrator can merge results without re-querying.
+In production, messages don't go through `route()`: OpenClaw's model picks the agent by calling one of the plugin's tools (see [Section 8](#8-openclaw-integration)). `route()` remains for tests and local scripts.
+
+Every agent lives in its own folder under `src/agents/` and follows the same three layers: **parse** free text into a typed filter object (`parser.ts`), **query** MySQL with parameterized SQL (`queries.ts`), then **format** the result for WhatsApp (`agent.ts`). Every agent returns the same `AgentResult` type (`src/types.ts`):
+
+| Field | Meaning |
+|---|---|
+| `status` | `success`, `needs_input` (asked a follow-up), `empty` (nothing matched), `not_ready` (e.g. no embeddings yet), `error` |
+| `intent` | `property_search`, `market_stats`, `semantic_search` |
+| `response` | ready-to-send WhatsApp text |
+| `data` | structured payload, so other agents and the orchestrator can reuse results without re-querying |
+
+Shared code lives outside the agent folders: `db/` (connection pool, and `listingFilters.ts`, the one place filters become SQL over `rets_property`), `embeddings/`, `memory/`, `utils/format.ts`, and `config.ts` (every environment setting).
 
 ### Code map
 
 | File | Week | Responsibility |
 |---|---|---|
-| `src/index.ts` | 1/5 | OpenClaw entry point; routes market questions vs. property search |
-| `src/db/connection.ts` | 3 | mysql2 connection pool (credentials from `.env`); `query<T>(sql, params)` |
-| `src/skills/propertySearch.ts` | 2 | `parsePropertyQuery()`: free text → `PropertyFilters` |
-| `src/skills/propertyQueries.ts` | 3 | `searchActiveListings()` over `rets_property`; `getSoldComps()` over `california_sold` |
-| `src/memory/session.ts` | 4 | In-memory per-user `UserSession` (`getSession`, `updateSession`, `clearSession`) |
-| `src/skills/searchSkill.ts` | 4 | Conversational search: merges filters into the session, asks follow-ups, returns property cards |
-| `src/skills/marketParser.ts` | 5 | `isMarketQuestion()`, `parseMarketQuery()`: free text → `MarketFilters` |
-| `src/skills/marketQueries.ts` | 5 | All market analytics SQL; `getMarketReport()` assembles a full report |
-| `src/skills/marketStatsSkill.ts` | 5 | `marketStatsAgent()`, WhatsApp formatting, buyer/seller market read |
-| `src/scripts/exportMarketReports.ts` | 5→8 | Writes per-city Markdown summaries to `docs/market_reports/` for RAG indexing |
+| `src/index.ts` | — | Temporary keyword router: `route(text, userId)` → agent |
+| `src/config.ts` | — | All environment settings, read once from `.env` |
+| `src/types.ts` | — | `AgentResult`, `AgentStatus`, `AgentIntent` |
+| `src/db/connection.ts` | 3 | mysql2 connection pool; `query<T>(sql, params)` |
+| `src/db/listingFilters.ts` | 3/6 | `activeListingWhere()`: filters → SQL over active `rets_property` listings |
+| `src/memory/session.ts` | 4 | In-memory per-user `UserSession` |
+| `src/utils/format.ts` | — | `fmtPrice`, `fmtMoney`, `fmtPct`, `fmtInt`, `fmtMonth`, `fmtDate` |
+| `src/agents/propertySearch/parser.ts` | 2 | `parsePropertyQuery()`, `extractCity()` |
+| `src/agents/propertySearch/queries.ts` | 3 | `searchActiveListings()` (≤ 50 rows); `getSoldComps()` (anchored on the data's latest close date) |
+| `src/agents/propertySearch/agent.ts` | 4 | `propertySearchAgent()`: session merge, follow-ups, property cards |
+| `src/agents/marketStats/parser.ts` | 5 | `isMarketQuestion()`, `parseMarketQuery()` |
+| `src/agents/marketStats/queries.ts` | 5 | Market analytics SQL; `getMarketReport()` |
+| `src/agents/marketStats/agent.ts` | 5 | `marketStatsAgent()`, WhatsApp formatting, `marketRead()` |
+| `src/agents/semanticSearch/intent.ts` | 6 | `isSemanticQuery()` |
+| `src/agents/semanticSearch/search.ts` | 6 | `semanticSearch()`, `candidateIds()`, reusable `rankBySimilarity()`, `fetchListings()` |
+| `src/agents/semanticSearch/agent.ts` | 6 | `semanticSearchAgent()`: cards + session results |
 | `src/embeddings/gemini.ts` | 6 | Gemini `batchEmbedContents` client: task prefixes, rate limiting, 429 retries, daily-quota stop |
-| `src/embeddings/listingText.ts` | 6 | `buildListingText()`: the text embedded for a listing; `textHash()` for change detection |
+| `src/embeddings/listingText.ts` | 6 | `buildListingText()`; `textHash()` for change detection |
 | `src/embeddings/store.ts` | 6 | `listing_embeddings` table, upserts, in-memory `VectorIndex` |
 | `src/embeddings/vectorMath.ts` | 6 | normalize, dot product, float32 ⇄ BLOB, top-k |
 | `src/scripts/buildListingEmbeddings.ts` | 6 | Resumable indexer (`npm run embed:listings`) |
-| `src/skills/semanticIntent.ts` | 6 | `isSemanticQuery()`: routes descriptive queries to semantic search |
-| `src/skills/semanticSearch.ts` | 6 | `semanticSearchAgent()`, `semanticSearch()`, reusable `rankBySimilarity()` |
-| `src/tests/*` | 2–5 | Parser tests (no DB) and integration tests (live DB) |
+| `src/scripts/exportMarketReports.ts` | 5→8 | Per-city Markdown summaries for RAG indexing |
+| `openclaw-plugin/index.ts` | — | OpenClaw tool plugin: three tools wrapping the agents |
+| `openclaw-plugin/openclaw.plugin.json` | — | Plugin manifest: tool contracts, bundled skill |
+| `openclaw-plugin/skills/idx-real-estate/SKILL.md` | — | Instructions for OpenClaw's agent: which tool, how to answer |
+| `test/unit/*.test.ts` | — | `npm test`: no database or API key |
+| `test/integration/*.test.ts` | — | `npm run test:db`, `npm run test:semantic` |
 
 ### Sessions
 
-`session.ts` holds one `UserSession` per `userId` in a `Map`. It stores the accumulated property filters, `lastResults`, and `conversationStep`. State lives in memory, so it resets when the process restarts. The Week 5 market agent reads the session's `city` to answer follow-ups like *"how's the market there?"*, but never writes to the session. The Week 6 semantic agent reads `city` too, and writes `lastResults` (and `city`, when the query names one) so the Week 7 recommendation engine can find listings similar to one the user just saw.
+`session.ts` holds one `UserSession` per `userId` in a `Map`. It stores the accumulated property filters, `lastResults` (the last listings shown, written by property search and semantic search), and `conversationStep`. State lives in memory, so it resets when the process restarts. The Week 5 market agent reads the session's `city` to answer follow-ups like *"how's the market there?"*, but never writes to the session. The Week 6 semantic agent reads `city` too, and writes `lastResults` (and `city`, when the query names one) so the Week 7 recommendation engine can find listings similar to one the user just saw.
 
 ---
 
@@ -150,16 +170,16 @@ Answer market questions (*"Is now a good time to buy in San Diego?"*, *"What is 
 ```text
 "Median price for condos in Irvine over the last 6 months"
       │
-      ▼ marketParser.parseMarketQuery()
+      ▼ marketStats/parser.ts  parseMarketQuery()
 { city: "Irvine", zip: null, subType: "Condominium", months: 6 }
       │
-      ▼ marketQueries.getMarketReport()   (runs these in parallel)
+      ▼ marketStats/queries.ts  getMarketReport()   (runs these in parallel)
   getMarketSummary(current window)   ─┐
   getMarketSummary(prior-year window) ├─ california_sold
   getMonthlyTrend(current window)    ─┘
   getActiveInventory()               ─── rets_property
       │
-      ▼ marketStatsSkill.formatReportForWhatsApp() + marketRead()
+      ▼ marketStats/agent.ts  formatReportForWhatsApp() + marketRead()
 📊 Irvine · Condos — Market Snapshot ...
 ```
 
@@ -216,13 +236,13 @@ The agent returns it as `data`, so later weeks can reuse it:
 
 ### Testing
 
-- `npm run test:market-parser` runs 19 checks on parsing and intent detection; no database needed.
-- `npm run test:market` runs live against MySQL:
+- `npm test` (`test/unit/marketParser.test.ts`) runs 19 checks on parsing and intent detection; no database needed.
+- `npm run test:db` (`test/integration/marketStats.test.ts`) runs live against MySQL:
   - six sample questions, covering city, ZIP, condo filter, no location, and unknown city
   - sanity checks on the numbers
   - a cross-check of the SQL median against one computed in TypeScript
   - checks that the trend matches the covered months, YoY is suppressed without a prior year, months of supply is right, and partial months have no %
-  - routing checks through `handleOpenClawPayload`
+  - routing checks through `route()`
 
 ---
 
@@ -314,9 +334,9 @@ Phrases like "similar to" or "vibe", and a `semantic:` prefix, force semantic se
 
 ### Testing
 
-- `npm run test:semantic-offline` runs 25 checks without a database or API key: routing cases, vector math (normalization, BLOB round-trip, unaligned buffers, top-k), and listing-text building and hashing.
-- `npm run test:semantic` runs live:
-  - five descriptive queries, including the handbook example
+- `npm test` (`test/unit/semantic.test.ts`) runs without a database or API key: routing cases, vector math (normalization, BLOB round-trip, unaligned buffers, top-k), listing-text building and hashing, and a **golden-hash guard**: the embedded text for a fixed sample listing must hash to a known value. If a code change alters the embedded text, this test fails before the indexer would silently re-embed everything.
+- `npm run test:semantic` (`test/integration/semanticSearch.test.ts`) runs live:
+  - four descriptive queries, including the handbook example
   - top-5 count, results sorted by similarity, similarities in range
   - hard filters respected (Pasadena, ≤ $2M)
   - re-embedding a stored listing reproduces its vector, and that listing finds itself in the top 3
@@ -325,16 +345,88 @@ Phrases like "similar to" or "vibe", and a `semantic:` prefix, force semantic se
 
 ---
 
-## 8. Runtime and Tooling
+## 8. OpenClaw Integration
+
+### How a WhatsApp message reaches the agents
+
+```text
+WhatsApp ──► OpenClaw Gateway (channel + session) ──► OpenClaw agent (LLM)
+                                                         │ reads skill idx-real-estate
+                                                         │ picks a tool, fills its parameters
+                                                         ▼
+                              openclaw-plugin/index.ts  tool.execute(params)
+                                                         │ sessionKey → per-conversation session
+                                                         ▼
+                              propertySearchAgent / marketStatsAgent / semanticSearchAgent
+                                                         │ MySQL (+ Gemini for semantic search)
+                                                         ▼
+                              "status: … / guidance / --- / reply"  ──► LLM writes the answer ──► WhatsApp
+```
+
+Before this plugin existed, OpenClaw answered real estate questions from its own model's general knowledge: plausible, but not MLS data (no real listings, guessed prices). The plugin makes the agents callable tools, and the bundled skill tells the model to use them instead of answering from memory.
+
+### The plugin
+
+`openclaw-plugin/` is an OpenClaw **tool plugin**, installed with `openclaw plugins install --link ./openclaw-plugin`:
+
+- **No SDK import, no build step.** The entry is a plain object with `register(api)`; OpenClaw accepts that shape, so the plugin needs no runtime import from the OpenClaw SDK. For linked local installs OpenClaw loads the TypeScript directly with its own transformer (`jiti`), so the plugin imports the agents straight from `src/`.
+- **Manifest** (`openclaw.plugin.json`): the tool names in `contracts.tools` (OpenClaw requires them, to know what a plugin owns without loading it), `activation.onStartup`, and `skills: ["./skills"]`.
+- **`.env` loading.** OpenClaw doesn't run the plugin from the repo: it runs a copy from `~/.openclaw/tmp/plugin-captures/…`, so a `.env` can't be found relative to the running file. At registration the plugin calls `loadProjectEnv(api)`, which loads the repo's `.env` using the plugin's real install path (`api.source` / `api.rootDir`), or an explicit `envFile` plugin setting. It logs which file it used (never the password).
+- **The project `.env` wins over inherited variables.** `src/config.ts` parses `.env` into its own map, and values there take priority over `process.env`. In the first live test, the Gateway process had inherited a different `MYSQL_PASSWORD`, which produced `Access denied for user 'root'` even though MySQL was up. `process.env` itself is never modified, so OpenClaw is unaffected. Settings are read on access, and the MySQL pool is created on first query, so a `.env` loaded during registration applies everywhere.
+
+### Tools
+
+| Tool | Agent | Required | Optional structured fields |
+|---|---|---|---|
+| `idx_property_search` | `propertySearchAgent` | `query` | `newSearch`, `city`, `maxPrice`, `minBeds`, `minBaths`, `minSqft`, `propertyType`, `pool`, `view` |
+| `idx_market_stats` | `marketStatsAgent` | `question` | `city`, `zip`, `propertyType`, `months` |
+| `idx_semantic_search` | `semanticSearchAgent` | `description` | `city`, `maxPrice`, `minBeds`, `minBaths`, `minSqft`, `propertyType` |
+
+- **The model's understanding beats the regexes.** The model always passes the user's own words, and fills in the structured fields it understood. Agents take these as `hints`: non-null hints override what the regex parsers extracted. A request like "pasadena houses, 4 bedrooms, max 1.6m" therefore works even though the Week 2 parser only finds cities after the word "in". With no hints, behavior is unchanged; all 20 baseline replies were re-verified as identical.
+- **Sessions per conversation.** Each tool gets OpenClaw's trusted tool context. `sessionIdFor()` keys the agents' session on OpenClaw's `sessionKey` (falling back to the sender id), so two WhatsApp chats never share search state. `newSearch: true` clears it.
+- **What the model sees.** Each result is `status: <status>`, then one line of guidance for that status, then the agent's reply. The guidance tells the model to answer only from the result, to ask the follow-up on `needs_input`, and not to fall back to general knowledge on `error` (e.g. MySQL offline). The structured `data` goes in the result's `details`, not the model's text.
+- **Errors.** Every tool call is wrapped: an exception becomes a `status: error` result instead of a failed tool call.
+- **Always visible (`catalogMode: "direct-only"`).** With OpenClaw's Code Mode on (as in this setup), plugin tools normally sit in a searchable catalog, and the model only sees a few generic tools (`exec`, `openclaw`, …). In the first live test, `gemini-3.5-flash-lite` never searched that catalog and answered "is now a good time to buy in San Diego?" from general knowledge: the run showed `codeModeEngaged: true` and no tool calls. Marking the three tools direct-only keeps them in the model's tool list on every turn.
+
+### The skill
+
+`skills/idx-real-estate/SKILL.md` covers:
+- **Scope:** use the tools for any California listing or market question; never answer those from general knowledge or web search.
+- **Which tool:** property search for criteria, semantic search for style and features, market stats for market conditions; mixed questions call two tools.
+- **Calling:** pass the user's words plus the structured fields, follow up on `needs_input`, and use `newSearch` when the user starts over.
+- **Answering:** keep the numbers exactly as returned, add nothing, and note that market numbers describe the dataset's date range.
+
+### Testing
+
+- `npm test` (`test/unit/plugin.test.ts`) checks that:
+  - the manifest, package entry and registered tools agree
+  - every tool schema is well-formed
+  - sessions are isolated per conversation
+  - results carry status and guidance
+  - the skill's frontmatter is valid and mentions every tool
+- Before release, the plugin was also driven the way OpenClaw would call it, against SQLite and a mock Gemini:
+  - a three-turn search where the model's structured fields supply the budget and bedrooms
+  - two chats with independent sessions
+  - `newSearch`
+  - ZIP and city/type/month hints for market stats
+  - city and price hints for semantic search
+  - a simulated MySQL outage, which returns `status: error`
+- The real proof is on your machine: `openclaw agent --agent coordinator --json --message "Is now a good time to buy in San Diego?"` should list `idx_market_stats` in `result.meta.agentMeta.terminalReceipt.successfulToolNames`, and the answer should quote numbers from your data.
+
+---
+
+## 9. Runtime and Tooling
 
 - TypeScript runs directly on Node (24.22.1+, which the OpenClaw submodule requires) using built-in type stripping; there is no build step.
 - Because of that, type-only imports must use `import type` / `import { type X }`, and relative imports include the `.ts` extension.
 - `ts-node` is not used; it is incompatible with TypeScript 7.
-- `npm run typecheck` runs `tsc --noEmit` (`allowImportingTsExtensions` is enabled in `tsconfig.json`).
+- `npm run typecheck` runs `tsc --noEmit` over `src/` and `test/` (`allowImportingTsExtensions` is enabled in `tsconfig.json`; `openclaw/` is excluded).
+- Tests use Node's built-in runner (`node:test` + `node:assert/strict`), so there are no test dependencies.
+- Configuration is read only in `src/config.ts`; no other module touches `process.env`.
 
 ---
 
-## 9. Data Notes
+## 10. Data Notes
 
 Profiling the local `california_sold` import (October 2026):
 

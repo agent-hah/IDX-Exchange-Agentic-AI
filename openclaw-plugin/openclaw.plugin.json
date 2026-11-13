@@ -1,0 +1,31 @@
+{
+  "id": "idx-exchange",
+  "name": "IDX Exchange Real Estate",
+  "description": "California MLS property search, market statistics and semantic search over the IDX Exchange datasets.",
+  "categories": [
+    "other"
+  ],
+  "contracts": {
+    "tools": [
+      "idx_property_search",
+      "idx_market_stats",
+      "idx_semantic_search"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "skills": [
+    "./skills"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "envFile": {
+        "type": "string",
+        "description": "Path to the IDX-Exchange .env (defaults to the repo's .env next to the plugin)."
+      }
+    }
+  }
+}

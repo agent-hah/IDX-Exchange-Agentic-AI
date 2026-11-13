@@ -22,8 +22,9 @@ const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const MAX_BATCH = 100; // requests per batchEmbedContents call
 
 // Free-tier defaults with headroom; raise these if you're on a paid tier.
-const TPM_LIMIT = config.embeddings.tokensPerMinute;
-const RPM_LIMIT = config.embeddings.requestsPerMinute;
+// Read per call so a .env loaded after import still applies.
+const tpmLimit = () => config.embeddings.tokensPerMinute;
+const rpmLimit = () => config.embeddings.requestsPerMinute;
 
 export type EmbedKind = "query" | "document";
 
@@ -49,7 +50,7 @@ async function waitForCapacity(tokens: number) {
     const now = Date.now();
     while (window.length && now - window[0]!.t > 60_000) window.shift();
     const used = window.reduce((s, w) => s + w.tokens, 0);
-    if (window.length < RPM_LIMIT && (used + tokens <= TPM_LIMIT || window.length === 0)) {
+    if (window.length < rpmLimit() && (used + tokens <= tpmLimit() || window.length === 0)) {
       window.push({ t: now, tokens });
       return;
     }

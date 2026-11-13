@@ -10,6 +10,10 @@ import { searchActiveListings, type ListingRow } from "./queries.ts";
  * budget → bedrooms until it has enough, then returns property cards.
  */
 
+function withoutNulls<T extends object>(o: T): Partial<T> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined)) as Partial<T>;
+}
+
 function formatCards(listings: ListingRow[]): string {
   return listings
     .map(({ L_Address, L_City, price, beds, baths, sqft, DaysOnMarket }) =>
@@ -22,9 +26,15 @@ function formatCards(listings: ListingRow[]): string {
     .join("\n\n---\n\n");
 }
 
+/**
+ * @param hints Structured filters from a caller that already understood the
+ *   request (e.g. OpenClaw's model). Non-null hints override what the regex
+ *   parser extracted from `message`.
+ */
 export async function propertySearchAgent(
   message: string,
   userId: string,
+  hints: Partial<PropertyFilters> = {},
 ): Promise<AgentResult<{ filters: Partial<PropertyFilters>; listings?: ListingRow[] }>> {
   const intent = "property_search";
   try {
@@ -32,7 +42,8 @@ export async function propertySearchAgent(
 
     // Merge new filters into the session, ignoring nulls so earlier answers aren't erased.
     const updates: Partial<PropertyFilters> = {};
-    for (const [key, value] of Object.entries(parsePropertyQuery(message))) {
+    const parsed = { ...parsePropertyQuery(message), ...withoutNulls(hints) };
+    for (const [key, value] of Object.entries(parsed)) {
       if (value !== null) (updates as Record<string, unknown>)[key] = value;
     }
     updateSession(userId, { ...updates, conversationStep: (session.conversationStep || 0) + 1 });

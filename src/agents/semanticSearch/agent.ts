@@ -50,10 +50,15 @@ export function formatSemanticResults(r: SemanticSearchResult): string {
   return lines.join("\n").trim();
 }
 
-export async function semanticSearchAgent(message: string, userId?: string): Promise<AgentResult<SemanticSearchResult>> {
+/** @param hints Structured filters from the caller; non-null values override the parser. */
+export async function semanticSearchAgent(
+  message: string,
+  userId?: string,
+  hints: Partial<HardFilters> = {},
+): Promise<AgentResult<SemanticSearchResult>> {
   try {
     const session = userId ? getSession(userId) : null;
-    const result = await semanticSearch(message, { k: 5, fallbackCity: session?.city ?? null });
+    const result = await semanticSearch(message, { k: 5, fallbackCity: session?.city ?? null, hints });
 
     if (result.indexed === 0) {
       return {

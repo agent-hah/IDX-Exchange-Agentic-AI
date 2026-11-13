@@ -1,0 +1,13 @@
+{
+  "name": "@idx-exchange/openclaw-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenClaw tool plugin exposing the IDX Exchange real estate agents.",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "compat": {
+      "pluginApi": ">=2026.5.17"
+    }
+  }
+}

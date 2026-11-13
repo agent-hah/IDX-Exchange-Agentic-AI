@@ -115,10 +115,14 @@ export interface SemanticSearchResult {
 
 export async function semanticSearch(
   text: string,
-  opts: { k?: number; fallbackCity?: string | null } = {},
+  opts: { k?: number; fallbackCity?: string | null; hints?: Partial<HardFilters> } = {},
 ): Promise<SemanticSearchResult> {
   const k = opts.k ?? 5;
-  const parsed = parsePropertyQuery(text);
+  // Structured hints from the caller (e.g. OpenClaw's model) override the regex parser.
+  const parsed = { ...parsePropertyQuery(text) };
+  for (const [key, v] of Object.entries(opts.hints ?? {})) {
+    if (v !== null && v !== undefined) (parsed as Record<string, unknown>)[key] = v;
+  }
   const filters: HardFilters = {
     city: (await canonicalCity(parsed.city)) ?? (await canonicalCity(opts.fallbackCity ?? null)),
     maxPrice: parsed.maxPrice,

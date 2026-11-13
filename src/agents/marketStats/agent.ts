@@ -119,9 +119,18 @@ export function formatReportForWhatsApp(r: MarketReport): string {
   return lines.join("\n");
 }
 
-export async function marketStatsAgent(message: string, userId?: string): Promise<AgentResult> {
+/** @param hints Structured filters from the caller; non-null values override the parser. */
+export async function marketStatsAgent(
+  message: string,
+  userId?: string,
+  hints: Partial<MarketFilters> = {},
+): Promise<AgentResult> {
   try {
-    const filters = parseMarketQuery(message);
+    const filters: MarketFilters = { ...parseMarketQuery(message) };
+    for (const [k, v] of Object.entries(hints)) {
+      if (v !== null && v !== undefined) (filters as unknown as Record<string, unknown>)[k] = v;
+    }
+    filters.months = Math.max(1, Math.min(48, Math.round(filters.months)));
 
     // Multi-turn: "how's the market there?" reuses the city from the search session.
     if (!filters.city && !filters.zip && userId) {
